@@ -1921,10 +1921,11 @@ private slots:
             "view": {"title": "Servers", "label": "All", "icon": "drive"}})",
                     {{"servers", "#!/bin/sh\ncat <<EOF\n{\"items\": ["
                                  "{\"id\": \"z\", \"name\": \"zulu\", \"subtitle\": \"SMB\", \"icon\": \"drive\", \"open\": {\"path\": \"" + home.path().toUtf8() + "\"}},"
-                                 "{\"id\": \"a/b\", \"name\": \"alpha\", \"details\": [[\"Host\", \"alpha.example\"]]}]}\nEOF\n"}});
+                                 "{\"id\": \"a/b\", \"name\": \"alpha\", \"details\": [[\"Host\", \"alpha.example\"]]},"
+                                 "{\"id\": \"r\", \"name\": \"relative\", \"open\": {\"path\": \".\"}}]}\nEOF\n"}});
         Plugins plugins("en", {folder.path()}, home.filePath("folio.conf"));
         QTRY_VERIFY(plugins.hasView("plugin:servers"));
-        QTRY_COMPARE(plugins.views().value("plugin:servers").toMap().value("items").toList().size(), 2);
+        QTRY_COMPARE(plugins.views().value("plugin:servers").toMap().value("items").toList().size(), 3);
 
         // In the plugin's order, not sorted; / searches the names.
         FolderModel model;
@@ -1932,7 +1933,7 @@ private slots:
         model.setItems(plugins.views().value("plugin:servers").toMap().value("items").toList());
         model.setPath("plugin:servers");
         QVERIFY(loaded.wait(3000));
-        QCOMPARE(model.count(), 2);
+        QCOMPARE(model.count(), 3);
         const QVariantMap zulu = model.get(0);
         QCOMPARE(zulu.value("name").toString(), QString("zulu"));
         QCOMPARE(zulu.value("kind").toString(), QString("item"));
@@ -1959,6 +1960,12 @@ private slots:
         QCOMPARE(backend.path(), QString("plugin:servers"));
         backend.open("plugin:servers/z");
         QCOMPARE(backend.path(), QDir::cleanPath(home.path()));
+        // A path that isn't absolute would be wherever Folio was started.
+        backend.open("plugin:servers/r");
+        QCOMPARE(backend.path(), QDir::cleanPath(home.path()));
+        // Nor does it take dropped files.
+        QCOMPARE(plugins.views().value("plugin:servers").toMap().value("items").toList().at(2).toMap().value("folder"),
+                 QVariant(QString()));
         // A view no plugin has isn't anywhere to go.
         QVERIFY(!backend.goTyped("plugin:nothing"));
         QCOMPARE(backend.path(), QDir::cleanPath(home.path()));

@@ -511,10 +511,11 @@ QVariantMap Plugins::itemMap(const Manifest &plugin, const Item &item) const {
         if (pair.size() == 2)
             details << QVariant(QVariantList{text(plugin, pair.at(0)), pair.at(1).toVariant().toString()});
     }
-    // Where it's lit in the sidebar: inside the folder it opens, or inside
-    // the mount, wherever GVfs puts it.
-    const QString folder = item.open.contains("path") ? QDir::cleanPath(expand(item.open.value("path").toString()))
-                                                      : QString();
+    // Where it's lit in the sidebar: inside the folder it opens (only an
+    // absolute path is one), or inside the mount, wherever GVfs puts it.
+    QString folder = QDir::cleanPath(expand(item.open.value("path").toString()));
+    if (QDir::isRelativePath(folder))
+        folder.clear();
     const QString root = item.open.contains("mount") ? Mounter::folderFor(item.open.value("mount").toString()) : folder;
     return {{"plugin", plugin.id}, {"id", item.id}, {"path", pathOf(plugin.id, item.id)}, {"name", item.name},
             {"icon", icon(plugin, item.icon)}, {"subtitle", item.subtitle.isUndefined() ? QString() : text(plugin, item.subtitle)},

@@ -310,7 +310,7 @@ An item's `open` is one of:
 
 | `open` | What happens |
 | --- | --- |
-| `{"path": "/some/folder"}` | Folio goes to that folder. `~` works. |
+| `{"path": "/some/folder"}` | Folio goes to that folder, an absolute path or one starting with `~`. |
 | `{"mount": "sftp://host/", "verified": true}` | Folio mounts the URL through GVfs (`sftp://`, `smb://`, `davs://`, anything GVfs mounts) and goes to the URL's folder. A URL naming only a server lands in the folder at your home's path on it when there is one (one person's machines tend to share a layout), or its top otherwise. A password request is asked in the window. `verified` says the plugin has already made sure who's on the other end, as Tailscale does, so Folio answers GVfs's host-key questions yes; without it, Folio declines them and the mount fails with GVfs's reason. |
 | `{"run": ["./wake", "studio"]}` | Folio runs the command as it runs a share entry, and acts on its [result](#results). |
 
@@ -354,7 +354,7 @@ next; printing nothing is fine.
 | --- | --- |
 | `notice` | Shows it in the status bar for a moment. Text. |
 | `copy` | Puts it on the clipboard. Not translated. |
-| `path` | Goes to that folder. |
+| `path` | Goes to that folder, an absolute path or one starting with `~`. |
 | `error` | Shows it as a failure, even with a zero exit. Text. |
 
 A command that exits with an error fails: Folio shows its `error` if it

@@ -139,7 +139,9 @@ bool Backend::go(const QString &path, bool record) {
         setMessage(tr("%1 doesn't exist.").arg(clean));
         return false;
     }
-    if (!FolderModel::isView(clean) && !QFileInfo(clean).isDir()) {
+    // A relative path (from a plugin) would be taken from wherever Folio
+    // was started, which means nothing here.
+    if (!FolderModel::isView(clean) && (QDir::isRelativePath(clean) || !QFileInfo(clean).isDir())) {
         setMessage(tr("%1 isn't a folder.").arg(clean));
         return false;
     }
