@@ -1605,9 +1605,14 @@ void FileOps::step(bool undoing) {
         });
 }
 
+// The type apps are registered for: a folder's, or the file's by its name
+// and contents.
+static QString mimeFor(const QString &path) {
+    return QFileInfo(path).isDir() ? QStringLiteral("inode/directory") : QMimeDatabase().mimeTypeForFile(path).name();
+}
+
 QString FileOps::defaultAppFor(const QString &path) {
-    const QString mime = QFileInfo(path).isDir() ? QStringLiteral("inode/directory")
-                                                  : QMimeDatabase().mimeTypeForFile(path).name();
+    const QString mime = mimeFor(path);
     char *type = g_content_type_from_mime_type(mime.toUtf8().constData());
     if (!type)
         return {};
@@ -1645,8 +1650,7 @@ QString FileOps::openInDefaultApp(const QString &path) {
 
 QVariantList FileOps::appsFor(const QString &path) const {
     QVariantList apps;
-    const QString mime = QFileInfo(path).isDir() ? QStringLiteral("inode/directory")
-                                                  : QMimeDatabase().mimeTypeForFile(path).name();
+    const QString mime = mimeFor(path);
     char *type = g_content_type_from_mime_type(mime.toUtf8().constData());
     if (!type)
         return apps;
@@ -1686,6 +1690,26 @@ void FileOps::openWith(const QString &path, const QString &appId) {
         g_error_free(error);
     g_list_free_full(files, g_object_unref);
     g_object_unref(app);
+}
+
+void FileOps::alwaysOpenWith(const QString &path, const QString &appId) {
+    GDesktopAppInfo *app = g_desktop_app_info_new(appId.toUtf8().constData());
+    if (!app)
+        return;
+    // Set for the file's exact type, so a Ruby file's choice doesn't change
+    // what every plain-text file opens with.
+    const QString mime = mimeFor(path);
+    char *type = g_content_type_from_mime_type(mime.toUtf8().constData());
+    GError *error = nullptr;
+    if (!type || !g_app_info_set_as_default_for_type(G_APP_INFO(app), type, &error))
+        emit failed(tr("Couldn't make %1 the default app for %2: %3")
+                        .arg(QString::fromUtf8(g_app_info_get_name(G_APP_INFO(app))), QMimeDatabase().mimeTypeForName(mime).comment(),
+                             QString::fromUtf8(error ? error->message : "")));
+    if (error)
+        g_error_free(error);
+    g_free(type);
+    g_object_unref(app);
+    openWith(path, appId);
 }
 
 void FileOps::openTerminal(const QString &folder) {

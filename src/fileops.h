@@ -129,6 +129,8 @@ public:
     // {id, name, isDefault}, the default first.
     Q_INVOKABLE QVariantList appsFor(const QString &path) const;
     Q_INVOKABLE void openWith(const QString &path, const QString &appId);
+    // Makes the app the default for the file's type, then opens it there.
+    Q_INVOKABLE void alwaysOpenWith(const QString &path, const QString &appId);
     Q_INVOKABLE void openTerminal(const QString &folder);
 
     // Stops the work under way at the next file; what's done stays done.
