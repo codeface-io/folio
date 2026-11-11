@@ -294,8 +294,9 @@ folder takes dropped files like any other place.
 The view lists all the plugin's items in the main pane, at the path
 `plugin:<id>` (which also works typed into the location bar). `title` names
 it in the window's title, the path bar and the search field ("Search
-Tailnet"); `label` and `icon` are its row at the end of the section; `empty`
-is shown when there are no items. It follows the polls, so items come and go
+Tailnet") and is required; `label` (the `title` when left out) and `icon`
+(`file` when left out) are its row at the end of the section; `empty` is
+shown when there are no items. It follows the polls, so items come and go
 while you look at it.
 
 Items show in the grid, list and columns layouts with their icon, name and
