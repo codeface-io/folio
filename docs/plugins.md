@@ -141,7 +141,7 @@ Unknown keys are ignored, so a manifest written for a later Folio still loads.
 | --- | --- |
 | `folio` | The version of this interface the plugin is written for: `1`. A plugin asking for another is skipped. |
 | `requires` | Programs that must be on `PATH`, checked when plugins are read. Without them the plugin is off: no rows, no entries, no polling. |
-| `poll` | `{"command": [...], "every": seconds}`: the command whose output gives the plugin's items, statuses and available share entries (see [Polling](#polling)). `every` defaults to 15, and is at least 5. |
+| `poll` | `{"command": [...], "every": seconds}`: the command whose output gives the plugin's items, statuses and available share entries (see [Polling](#polling)). `every` defaults to 15, and is at least 5 and at most 86400 (a day). |
 | `section` | A sidebar section of the plugin's items (see [The sidebar section](#the-sidebar-section)). |
 | `view` | A view of all the plugin's items in the main pane (see [The view](#the-view)). |
 | `share` | Entries under Share in the right-click menu (see [Share entries](#share-entries)). |

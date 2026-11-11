@@ -1548,6 +1548,10 @@ private slots:
         QCOMPARE(manifest->share[1].under, QStringList({"~/Dropbox/"}));
         QVERIFY(manifest->share[1].single && manifest->share[1].detach);
 
+        // Nor less often than once a day, which a timer can still count.
+        QCOMPARE(Plugins::parseManifest(R"({"folio": 1, "poll": {"command": ["./x"], "every": 5000000}})", &error)->every,
+                 86400);
+
         // The defaults: polled every 15 seconds, every item in the section.
         const auto plain = Plugins::parseManifest(R"({"folio": 1, "poll": {"command": ["./x"]}, "section": {"title": "X"}})", &error);
         QVERIFY(plain);

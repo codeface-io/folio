@@ -134,7 +134,8 @@ std::optional<Plugins::Manifest> Plugins::parseManifest(const QByteArray &json, 
         if (!command)
             return fail("\"poll\" has no command");
         m.poll = *command;
-        m.every = std::max(5, poll.value("every").toInt(15));
+        // At most a day, so the interval in milliseconds fits a timer.
+        m.every = std::clamp(poll.value("every").toInt(15), 5, 86400);
     }
 
     if (root.contains("section")) {
