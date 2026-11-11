@@ -229,9 +229,12 @@ FolioMenu {
         keys: "Ctrl+D"
         onTriggered: fileMenu.pinRequested(fileMenu.target.path)
     }
+    // On empty space, only where the folder shown is one to work in.
     FolioMenuItem {
-        shown: fileMenu.forFiles && (!fileMenu.forItem || fileMenu.forFolder)
+        shown: fileMenu.forItem ? fileMenu.forFolder && fileMenu.forFiles
+                                : fileMenu.folder.startsWith("/") && !fileMenu.trashView
         text: qsTr("Open Terminal Here")
+        keys: fileMenu.forItem ? "" : "Ctrl+Alt+T"
         onTriggered: fileOps.openTerminal(fileMenu.forItem ? fileMenu.target.path : fileMenu.folder)
     }
     FolioMenuItem {

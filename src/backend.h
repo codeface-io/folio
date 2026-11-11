@@ -77,6 +77,11 @@ public:
     Q_INVOKABLE void newWindow();
     // Keeps an open preview on the item selected in the grid.
     Q_INVOKABLE void followSelection(const QString &path);
+    // Omarchy's Super+Return opens a terminal in the focused window's working
+    // directory, so the process works in the folder this pane shows, from
+    // now on as it moves, until another pane asks for it. Views and servers
+    // aren't local folders and leave it where it was.
+    Q_INVOKABLE void keepWorkingDirectory();
 
     // Called for org.freedesktop.FileManager1: open a folder, or open the
     // folder holding a file and select it.
@@ -139,4 +144,7 @@ private:
     // which a reading has to match to be shown.
     QString m_described;
     quint64 m_describing = 0;
+    // The pane the working directory follows: the one used last.
+    static inline Backend *s_working = nullptr;
+    void moveWorkingDirectory();
 };

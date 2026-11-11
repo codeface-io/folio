@@ -43,6 +43,11 @@ ApplicationWindow {
     // Whether the window is wide enough for the details column at all.
     readonly property bool detailsFit: width >= (split ? 1400 : 960)
 
+    // The process works in the folder the window used last shows, in the
+    // pane used last, for Omarchy's terminal key to open there.
+    onActiveChanged: if (active && activePane) activePane.paneBackend.keepWorkingDirectory()
+    onActivePaneChanged: if (active && activePane) activePane.paneBackend.keepWorkingDirectory()
+
     // Remembers the view between launches (~/.config/folio/folio.conf).
     Settings {
         property alias viewMode: win.viewMode

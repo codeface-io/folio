@@ -1820,6 +1820,34 @@ private slots:
         QCOMPARE(Backend::complete("Wo", h, "recent:"), QString("Work/"));
     }
 
+    void backendKeepsTheWorkingDirectoryOnItsFolder()
+    {
+        const QString before = QDir::currentPath();
+        const auto restore = qScopeGuard([before] { QDir::setCurrent(before); });
+        QTemporaryDir home;
+        QDir(home.path()).mkpath("Work");
+        const QString work = QFileInfo(home.filePath("Work")).canonicalFilePath();
+        Backend kept(home.path()), other(home.path());
+        kept.navigate(work);
+        QCOMPARE(QDir::currentPath(), before);   // Not until it's asked to.
+
+        kept.keepWorkingDirectory();
+        QCOMPARE(QDir::currentPath(), work);
+        kept.navigate(home.path());
+        QCOMPARE(QDir::currentPath(), QFileInfo(home.path()).canonicalFilePath());
+        kept.navigate(work);
+        // A view isn't a folder to work in: it stays where it was.
+        kept.navigate(FolderModel::recentPath());
+        QCOMPARE(QDir::currentPath(), work);
+        // Only the pane used last moves it, until another one takes it.
+        other.navigate(home.path());
+        QCOMPARE(QDir::currentPath(), work);
+        other.keepWorkingDirectory();
+        QCOMPARE(QDir::currentPath(), QFileInfo(home.path()).canonicalFilePath());
+        kept.navigate(work);
+        QCOMPARE(QDir::currentPath(), QFileInfo(home.path()).canonicalFilePath());
+    }
+
     void backendShowItemSelectsTheFile()
     {
         QTemporaryDir home;

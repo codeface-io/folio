@@ -144,8 +144,21 @@ bool Backend::go(const QString &path, bool record) {
         m_index = m_history.size() - 1;
     }
     m_folder.setPath(clean);
+    if (s_working == this)
+        moveWorkingDirectory();
     emit pathChanged();
     return true;
+}
+
+void Backend::keepWorkingDirectory() {
+    s_working = this;
+    moveWorkingDirectory();
+}
+
+void Backend::moveWorkingDirectory() {
+    const QString p = path();
+    if (!FolderModel::isView(p) && !p.startsWith(gvfsRoot() + "/"))
+        QDir::setCurrent(p);
 }
 
 void Backend::open(const QString &path) {
@@ -307,6 +320,8 @@ void Backend::describe(const QVariantMap &item, bool inTrash) {
 }
 
 Backend::~Backend() {
+    if (s_working == this)
+        s_working = nullptr;
     // The preview follows this window; it closes with it.
     if (previewing()) {
         m_preview.terminate();
