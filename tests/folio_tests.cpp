@@ -1548,6 +1548,32 @@ private slots:
         QCOMPARE(ops.undoName(), QString("Undo Rename"));
     }
 
+    void undoRefusesATrashedItemThatsSinceAnother()
+    {
+        // Deleted from the trash for good, an item's name there can go to
+        // the next one trashed, by another app. Undoing the first trashing
+        // would then bring that one back in its place.
+        QTemporaryDir data, dir, elsewhere;
+        const auto restore = dataHomeAt(data.path());
+        FileOps::forgetHistory();
+        write(dir.filePath("a.txt"), "mine");
+        write(elsewhere.filePath("a.txt"), "theirs");
+        FileOps ops;
+        QSignalSpy failed(&ops, &FileOps::failed);
+        ops.trash({dir.filePath("a.txt")});
+        QTRY_VERIFY(ops.busy().isEmpty());
+        const QString trashed = data.filePath("Trash/files/a.txt");
+        QVERIFY(FileOps::deleteTrashed(trashed));
+        QString error;
+        QCOMPARE(FileOps::trashOne(elsewhere.filePath("a.txt"), &error), trashed);
+        ops.undo();
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QCOMPARE(failed.count(), 1);
+        QCOMPARE(failed.last().first().toString(), QString("Can't undo that: a.txt isn't where it was left."));
+        QVERIFY(!QFileInfo::exists(dir.filePath("a.txt")));
+        QCOMPARE(FileOps::originalPath(trashed), elsewhere.filePath("a.txt"));
+    }
+
     void extractOneItemBesideTheArchive()
     {
         // An archive holding one folder (or file) puts it beside the

@@ -1050,7 +1050,7 @@ void FileOps::trash(const QStringList &paths) {
                 if (const QString trashed = trashOne(path, &why); !trashed.isEmpty())
                     result.steps << Step{true, path, trashed};
                 else if (!why.isEmpty())
-                    result.failures << QFileInfo(path).fileName() + " (" + why + ")";
+                    result.failures << tr("%1 (%2)").arg(QFileInfo(path).fileName(), why);
                 ++job.done;
             }
             return result;
@@ -1503,7 +1503,11 @@ static QString unchanged(const QList<FileOps::Step> &steps, bool undoing) {
     };
     for (auto step = steps.crbegin(); step != steps.crend(); ++step) {
         const auto [now, next] = ends(*step);
-        if (!there(now)) {
+        // An item in the trash is the one trashed only while its note still
+        // says it came from here: once it was deleted for good, the name
+        // there can have gone to another.
+        const bool trashed = step->trash && !step->other.isEmpty();
+        if (!there(now) || (trashed && FileOps::originalPath(now) != step->path)) {
             const QString name = QFileInfo(step->path).fileName();
             return undoing ? FileOps::tr("Can't undo that: %1 isn't where it was left.").arg(name)
                            : FileOps::tr("Can't redo that: %1 isn't where it was left.").arg(name);
