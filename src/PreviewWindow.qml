@@ -66,7 +66,8 @@ ApplicationWindow {
             // What it is, where it sits in the folder, and the way out.
             Rectangle {
                 Layout.fillWidth: true
-                implicitHeight: 60
+                // Grows with larger text; the buttons keep their size.
+                implicitHeight: Math.max(60, heading.implicitHeight + 24)
                 color: theme.background
 
                 RowLayout {
@@ -76,13 +77,14 @@ ApplicationWindow {
                     spacing: 12
 
                     ColumnLayout {
+                        id: heading
                         Layout.fillWidth: true
                         spacing: 2
                         Text {
                             Layout.fillWidth: true
                             text: win.item.name || ""
                             color: theme.brightForeground
-                            font.pixelSize: 15
+                            font.pixelSize: theme.scaled(15)
                             font.weight: Font.DemiBold
                             elide: Text.ElideMiddle
                         }
@@ -90,7 +92,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             text: Format.summary(win.item, previewer.type)
                             color: theme.secondaryForeground
-                            font.pixelSize: 12
+                            font.pixelSize: theme.scaled(12)
                             elide: Text.ElideRight
                         }
                     }
@@ -100,7 +102,7 @@ ApplicationWindow {
                         text: qsTr("%1 of %2").arg((previewer.index + 1).toLocaleString(Qt.locale(), "f", 0))
                                               .arg(previewer.count.toLocaleString(Qt.locale(), "f", 0))
                         color: theme.secondaryForeground
-                        font.pixelSize: 12
+                        font.pixelSize: theme.scaled(12)
                     }
                     IconButton { glyph: "back"; text: qsTr("Previous (←)"); enabled: previewer.index > 0; onClicked: previewer.previous() }
                     IconButton { glyph: "forward"; text: qsTr("Next (→)"); enabled: previewer.index + 1 < previewer.count; onClicked: previewer.next() }
@@ -279,7 +281,7 @@ ApplicationWindow {
                 color: theme.foreground
                 selectionColor: theme.accent
                 selectedTextColor: theme.accentForeground
-                font.pixelSize: 13
+                font.pixelSize: theme.scaled(13)
             }
 
             ScrollBar.vertical: FolioScrollBar { }

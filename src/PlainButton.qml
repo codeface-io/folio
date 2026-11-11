@@ -8,7 +8,7 @@ AbstractButton {
     property bool primary: false
 
     implicitWidth: Math.max(88, label.implicitWidth + 32)
-    implicitHeight: 36
+    implicitHeight: Math.max(36, theme.scaled(36))
     hoverEnabled: true
     Accessible.name: text
 

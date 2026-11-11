@@ -76,7 +76,7 @@ Item {
                     Layout.alignment: Qt.AlignHCenter
                     text: player.metaData.stringValue(MediaMetaData.Title) || previewer.item.name || ""
                     color: theme.brightForeground
-                    font.pixelSize: 16
+                    font.pixelSize: theme.scaled(16)
                     font.weight: Font.DemiBold
                 }
                 Text {
@@ -115,7 +115,7 @@ Item {
                     text: media.playing ? qsTr("Pause (K)") : qsTr("Play (K)")
                     onClicked: media.toggle()
                 }
-                Text { text: media.clock(player.position); color: theme.foreground; font.pixelSize: 12 }
+                Text { text: media.clock(player.position); color: theme.foreground; font.pixelSize: theme.scaled(12) }
                 Slider {
                     Layout.fillWidth: true
                     from: 0
@@ -125,7 +125,7 @@ Item {
                     focusPolicy: Qt.NoFocus
                     onMoved: player.position = value
                 }
-                Text { text: media.clock(player.duration); color: theme.secondaryForeground; font.pixelSize: 12 }
+                Text { text: media.clock(player.duration); color: theme.secondaryForeground; font.pixelSize: theme.scaled(12) }
             }
         }
     }

@@ -47,7 +47,7 @@ Item {
             anchors.centerIn: parent
             text: qsTr("Page %1 of %2").arg(view.currentPage + 1).arg(doc.pageCount)
             color: theme.secondaryForeground
-            font.pixelSize: 12
+            font.pixelSize: theme.scaled(12)
         }
     }
 }

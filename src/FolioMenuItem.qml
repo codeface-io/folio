@@ -20,7 +20,7 @@ MenuItem {
     visible: shown
     height: shown ? implicitHeight : 0
     activeFocusOnTab: shown
-    implicitHeight: 32
+    implicitHeight: Math.max(32, theme.scaled(32))
     leftPadding: 14
     rightPadding: 14
 
@@ -48,7 +48,7 @@ MenuItem {
             visible: !entry.subMenu
             text: Format.keys(entry.keys)
             color: theme.secondaryForeground
-            font.pixelSize: 11
+            font.pixelSize: theme.scaled(11)
         }
     }
 

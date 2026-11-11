@@ -29,13 +29,13 @@ Item {
     signal clicked(int modifiers)
     signal activated()
 
-    implicitHeight: 32
+    implicitHeight: Math.max(32, theme.scaled(32))
 
     // The name always gets room: in a narrow window the date goes first,
     // then the size. (The icon says what kind a file is; there's no column
     // for it.)
-    readonly property bool showDate: detailed && width >= 480
-    readonly property bool showSize: detailed && width >= 380
+    readonly property bool showDate: detailed && width >= theme.scaled(480)
+    readonly property bool showSize: detailed && width >= theme.scaled(380)
 
     readonly property string glyph: row.isDir ? "folder"
                                   : row.kind === "peer" ? "peer"
@@ -117,22 +117,23 @@ Item {
         }
         Text {
             visible: row.showSize
-            Layout.preferredWidth: 96
+            Layout.preferredWidth: theme.scaled(96)
             horizontalAlignment: Text.AlignRight
             text: row.kind === "peer" ? row.extension : row.isDir ? Format.count(row.itemCount) : Format.size(row.size)
             color: theme.secondaryForeground
-            font.pixelSize: 12
+            font.pixelSize: theme.scaled(12)
+            elide: Text.ElideRight
         }
         Text {
             visible: row.showDate
-            Layout.preferredWidth: 96
+            Layout.preferredWidth: theme.scaled(96)
             Layout.leftMargin: 12
             text: {
                 translator.language // Re-read when the language (and so the default locale) changes.
                 return Format.when(row.modified)
             }
             color: theme.secondaryForeground
-            font.pixelSize: 12
+            font.pixelSize: theme.scaled(12)
             elide: Text.ElideRight
         }
         Glyph {

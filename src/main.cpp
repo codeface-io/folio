@@ -40,15 +40,16 @@ static QString startPath(const QStringList &args, QString *select) {
 }
 
 // Omarchy points fontconfig's monospace at the font picked in its menu, so
-// asking for "monospace" follows the user's choice.
+// asking for "monospace" follows the user's choice. The size is Folio's own
+// (`fontSize` in folio.conf).
 static void setUp(QGuiApplication &app) {
     app.setApplicationName("folio");
-    // Settings (the chosen view) go to ~/.config/folio/folio.conf.
+    // Settings (the chosen view, the text size) live in ~/.config/folio/folio.conf.
     app.setOrganizationName("folio");
     app.setWindowIcon(QIcon::fromTheme("folio"));
     QFont font("monospace");
     font.setStyleHint(QFont::Monospace);
-    font.setPixelSize(13);
+    font.setPixelSize(Theme::configuredFontSize());
     app.setFont(font);
     QQuickStyle::setStyle("Material");
 }
