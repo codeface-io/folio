@@ -61,6 +61,7 @@ Item {
         case "recent": return circle(12, 12, 9) + "M12 7v5l3 2"
         case "trash": return "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"
         case "drive": return box(3, 6, 18, 12, r) + "M7 14h2"
+        case "eject": return "M12 5l7 8H5zM5 18h14"
         case "peer": return box(4, 4, 16, 11, r) + "M9 20h6M12 15v5"
         // Machines joined to one another: the whole tailnet.
         case "tailnet": return circle(12, 5, 2.5) + circle(5, 18, 2.5) + circle(19, 18, 2.5) + "M10.8 7.2L6.2 15.8M13.2 7.2l4.6 8.6M7.5 18h9"

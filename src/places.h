@@ -49,6 +49,11 @@ public:
     // forgetting it takes it off the sidebar again.
     Q_INVOKABLE void remember(const QString &host);
     Q_INVOKABLE void forget(const QString &host);
+
+    // Lets go of the drive at `path`: ejects it when it can be (so a stick
+    // or card is safe to pull out), otherwise unmounts it. Off the UI
+    // thread, in GIO; `failed` says why when it can't.
+    Q_INVOKABLE void eject(const QString &path);
     // The hosts recorded, most recently opened first.
     QStringList opened() const;
     // The peers among `opened`, in its order, at most `limit` of them.
@@ -62,13 +67,24 @@ public:
         QString device;
         QString type;
         QString label;
+        // What GIO can do with it, and the bytes left on it for the user;
+        // -1 when that isn't known.
+        bool canEject = false;
+        bool canUnmount = false;
+        qint64 free = -1;
     };
     // The physical drives among the mounts, one entry per drive: removable
-    // and extra internal disks, never the system's own partitions.
+    // and extra internal disks, never the system's own partitions. Each
+    // says how it's let go of ("release": "eject", "unmount", or empty when
+    // it can't be) and how much is free.
     static QVariantList physicalDrives(const QList<Mount> &mounts, const QString &systemDevice);
 
 signals:
     void changed();
+    // A drive is about to be let go of: whatever shows a folder on it
+    // leaves, so Folio itself doesn't keep it busy.
+    void releasing(const QString &root);
+    void failed(const QString &message);
 
 private:
     void refreshPlaces();

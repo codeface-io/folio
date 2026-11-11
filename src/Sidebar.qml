@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "Format.js" as Format
 
 // Home's folders, pinned folders, views, drives and tailnet machines. The one holding the current folder
 // stays lit while you dig into it, so you always know which root you're under.
@@ -83,6 +84,12 @@ Rectangle {
         return best
     }
 
+    // A drive that couldn't be let go of says why where the files are.
+    Connections {
+        target: places
+        function onFailed(message) { sidebar.target.showMessage(message) }
+    }
+
     function statusText(status) {
         // Up to date is the normal state and says nothing; only syncing or
         // a stopped Dropbox is worth a word.
@@ -112,9 +119,12 @@ Rectangle {
         readonly property bool dropHover: rowDrop.containsDrag
         property string status
         property color statusColor
+        // A quiet second line under the name, for what's too long to sit
+        // beside it in the narrow sidebar.
+        property string detail
 
         Layout.fillWidth: true
-        implicitHeight: 34
+        implicitHeight: detail.length > 0 ? 44 : 34
         leftPadding: 14
         rightPadding: 14
         hoverEnabled: true
@@ -147,11 +157,23 @@ Rectangle {
         contentItem: RowLayout {
             spacing: 14
             Glyph { name: row.glyph; color: row.active ? theme.brightForeground : theme.foreground }
-            Text {
+            ColumnLayout {
                 Layout.fillWidth: true
-                text: row.text
-                elide: Text.ElideRight
-                color: row.active ? theme.brightForeground : theme.foreground
+                spacing: 2
+                Text {
+                    Layout.fillWidth: true
+                    text: row.text
+                    elide: Text.ElideRight
+                    color: row.active ? theme.brightForeground : theme.foreground
+                }
+                Text {
+                    Layout.fillWidth: true
+                    visible: row.detail.length > 0
+                    text: row.detail
+                    elide: Text.ElideRight
+                    color: theme.secondaryForeground
+                    font.pixelSize: 11
+                }
             }
             Text { visible: row.status.length > 0; text: row.status; color: row.statusColor; font.pixelSize: 11 }
         }
@@ -293,10 +315,13 @@ Rectangle {
                 }
             }
 
+            // Each drive says how much is free under its name, where there's
+            // room for it, and on hover shows the button that ejects it.
             SectionLabel { text: qsTr("Devices"); visible: places.devices.length > 0 }
             Repeater {
                 model: places.devices
                 PlaceRow {
+                    id: driveRow
                     required property var modelData
                     required property int index
                     dropPath: modelData.path
@@ -307,6 +332,22 @@ Rectangle {
                     glyph: modelData.icon
                     active: sidebar.activePath === modelData.path
                     onClicked: sidebar.target.navigate(modelData.path)
+                    detail: {
+                        translator.language // Re-read when the language (and so its digits) changes.
+                        return modelData.free < 0 ? "" : Format.free(modelData.free)
+                    }
+                    rightPadding: eject.visible ? eject.implicitWidth + 6 : 14
+                    IconButton {
+                        id: eject
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        implicitWidth: 28
+                        implicitHeight: 28
+                        visible: driveRow.modelData.release !== "" && (driveRow.hovered || hovered)
+                        glyph: "eject"
+                        text: driveRow.modelData.release === "eject" ? qsTr("Eject") : qsTr("Unmount")
+                        onClicked: places.eject(driveRow.modelData.path)
+                    }
                 }
             }
 

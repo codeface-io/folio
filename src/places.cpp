@@ -14,7 +14,15 @@
 #include <QJsonObject>
 #include <QStandardPaths>
 #include <QStorageInfo>
+#include <QPointer>
 #include <algorithm>
+#include <memory>
+
+// GIO's headers use `signals` as a struct member, which Qt defines as a
+// keyword.
+#undef signals
+#include <gio/gio.h>
+#define signals Q_SIGNALS
 
 namespace {
 
@@ -57,6 +65,55 @@ QVariantList parseBookmarks(const QStringList &lines, const QString &home) {
                               {"path", path}, {"icon", "folder"}};
     }
     return pinned;
+}
+
+// GIO's mount at `path`, with a reference for the caller, or null when GIO
+// doesn't list one there (a drive only fstab knows of, which a user can't
+// unmount anyway).
+GMount *mountAt(const QString &path) {
+    GVolumeMonitor *monitor = g_volume_monitor_get();
+    GList *mounts = g_volume_monitor_get_mounts(monitor);
+    GMount *found = nullptr;
+    for (GList *l = mounts; l && !found; l = l->next) {
+        GFile *root = g_mount_get_root(G_MOUNT(l->data));
+        char *rootPath = g_file_get_path(root);
+        if (rootPath && QString::fromUtf8(rootPath) == path)
+            found = G_MOUNT(g_object_ref(l->data));
+        g_free(rootPath);
+        g_object_unref(root);
+    }
+    g_list_free_full(mounts, g_object_unref);
+    g_object_unref(monitor);
+    return found;
+}
+
+// What an eject or unmount needs to report back once GIO is done. The
+// sidebar can be gone by then, so it's held by a guard.
+struct Release {
+    QPointer<Places> places;
+    QString name;
+    bool eject;
+};
+
+void released(GObject *source, GAsyncResult *result, gpointer data) {
+    std::unique_ptr<Release> release(static_cast<Release *>(data));
+    GError *error = nullptr;
+    const bool ok = release->eject ? g_mount_eject_with_operation_finish(G_MOUNT(source), result, &error)
+                                   : g_mount_unmount_with_operation_finish(G_MOUNT(source), result, &error);
+    if (Places *places = release->places.data()) {
+        if (ok) {
+            places->refresh();
+        } else if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_BUSY)) {
+            emit places->failed(release->eject ? Places::tr("%1 is in use and can't be ejected.").arg(release->name)
+                                               : Places::tr("%1 is in use and can't be unmounted.").arg(release->name));
+        } else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_FAILED_HANDLED)) {
+            const QString why = QString::fromUtf8(error ? error->message : "");
+            emit places->failed(release->eject ? Places::tr("Couldn't eject %1: %2").arg(release->name, why)
+                                               : Places::tr("Couldn't unmount %1: %2").arg(release->name, why));
+        }
+    }
+    if (error)
+        g_error_free(error);
 }
 
 } // namespace
@@ -319,7 +376,11 @@ QVariantList Places::physicalDrives(const QList<Mount> &mounts, const QString &s
             continue;
         seen << m.device;
         const QString name = m.label.isEmpty() ? QFileInfo(m.root).fileName() : m.label;
-        drives << QVariantMap{{"name", name.isEmpty() ? m.root : name}, {"path", m.root}, {"icon", "drive"}};
+        // A drive that can be ejected is one to pull out afterwards; only
+        // eject makes sure it can be (the stick powered down, the disc out).
+        const QString release = m.canEject ? "eject" : m.canUnmount ? "unmount" : "";
+        drives << QVariantMap{{"name", name.isEmpty() ? m.root : name}, {"path", m.root}, {"icon", "drive"},
+                              {"release", release}, {"free", m.free}};
     }
     return drives;
 }
@@ -331,11 +392,44 @@ void Places::refreshDevices() {
     std::sort(volumes.begin(), volumes.end(),
               [](const QStorageInfo &a, const QStorageInfo &b) { return a.rootPath().size() < b.rootPath().size(); });
     for (const QStorageInfo &v : volumes) {
-        if (v.isValid() && v.isReady())
-            mounts << Mount{v.rootPath(), QString::fromUtf8(v.device()), QString::fromUtf8(v.fileSystemType()),
-                            v.name()};
+        if (!v.isValid() || !v.isReady())
+            continue;
+        Mount mount{v.rootPath(), QString::fromUtf8(v.device()), QString::fromUtf8(v.fileSystemType()), v.name()};
+        mount.free = v.bytesAvailable();
+        if (GMount *gmount = mountAt(mount.root)) {
+            mount.canEject = g_mount_can_eject(gmount);
+            mount.canUnmount = g_mount_can_unmount(gmount);
+            g_object_unref(gmount);
+        }
+        mounts << mount;
     }
     m_devices = physicalDrives(mounts, QString::fromUtf8(QStorageInfo::root().device()));
+}
+
+void Places::eject(const QString &path) {
+    QVariantMap drive;
+    for (const QVariant &d : m_devices)
+        if (d.toMap().value("path").toString() == path)
+            drive = d.toMap();
+    const QString release = drive.value("release").toString();
+    GMount *mount = release.isEmpty() ? nullptr : mountAt(path);
+    if (!mount)
+        return;
+    emit releasing(path);
+    // The process's own working directory follows the folder shown, and
+    // would hold the drive too.
+    if (const QString here = QDir::currentPath(); here == path || here.startsWith(path + "/"))
+        QDir::setCurrent(m_home);
+    // Without a mount operation, a drive in use is reported as busy rather
+    // than put to a question nobody here would answer, which GIO takes as a
+    // cancel. Qt runs on GLib's main loop, so the answer comes back on the
+    // UI thread.
+    auto *context = new Release{this, drive.value("name").toString(), release == "eject"};
+    if (context->eject)
+        g_mount_eject_with_operation(mount, G_MOUNT_UNMOUNT_NONE, nullptr, nullptr, released, context);
+    else
+        g_mount_unmount_with_operation(mount, G_MOUNT_UNMOUNT_NONE, nullptr, nullptr, released, context);
+    g_object_unref(mount);
 }
 
 void Places::pollTailscale() {

@@ -2151,6 +2151,49 @@ private slots:
         QCOMPARE(drives.at(1).toMap().value("path").toString(), QString("/run/media/me/Photos"));
     }
 
+    void drivesSayHowTheyreLetGoOf()
+    {
+        // A stick or card is ejected, so it's safe to pull out; a disk that
+        // can only be unmounted is unmounted; one GIO can't let go of (only
+        // fstab knows it) has no button at all.
+        Places::Mount stick{"/run/media/me/Photos", "/dev/sdb1", "exfat", "Photos"};
+        stick.canEject = stick.canUnmount = true;
+        stick.free = 120'000'000'000;
+        Places::Mount disk{"/run/media/me/Backup", "/dev/sdc1", "ext4", "Backup"};
+        disk.canUnmount = true;
+        const Places::Mount fixed{"/mnt/archive", "/dev/sda1", "ext4", ""};
+        const auto drives = Places::physicalDrives({stick, disk, fixed}, "/dev/nvme0n1p2");
+        QCOMPARE(drives.size(), 3);
+        QCOMPARE(drives.at(0).toMap().value("release").toString(), QString("eject"));
+        QCOMPARE(drives.at(1).toMap().value("release").toString(), QString("unmount"));
+        QCOMPARE(drives.at(2).toMap().value("release").toString(), QString());
+        QCOMPARE(drives.at(0).toMap().value("free").toLongLong(), 120'000'000'000);
+        QCOMPARE(drives.at(2).toMap().value("free").toLongLong(), -1);
+    }
+
+    void drivesSayWhatsFreeInTheLanguagesDigits()
+    {
+        QQmlEngine engine;
+        QQmlComponent component(&engine);
+        component.setData("import QtQuick\nimport \"Format.js\" as Format\n"
+                          "QtObject { function free(bytes) { return Format.free(bytes) } }",
+                          QUrl::fromLocalFile(QFINDTESTDATA("../src/Format.js")));
+        std::unique_ptr<QObject> format(component.create());
+        QVERIFY(format);
+        auto free = [&](qint64 bytes) {
+            QVariant text;
+            QMetaObject::invokeMethod(format.get(), "free", Q_RETURN_ARG(QVariant, text), Q_ARG(QVariant, bytes));
+            return text.toString();
+        };
+        QCOMPARE(free(120'000'000'000), QString("120.0 GB free"));
+        QCOMPARE(free(512), QString("512 B free"));
+
+        const QLocale before;
+        const auto restore = qScopeGuard([before] { QLocale::setDefault(before); });
+        QLocale::setDefault(QLocale("ar_EG"));
+        QCOMPARE(free(120'000'000'000), QLocale("ar_EG").toString(120.0, 'f', 1) + " GB free");
+    }
+
     void placesParseDropboxStatus()
     {
         QCOMPARE(Places::parseDropboxStatus("Up to date\n"), QString("synced"));

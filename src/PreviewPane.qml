@@ -24,6 +24,14 @@ Rectangle {
     readonly property bool trashed: hasItem && origin.length > 0
     // A tailnet machine shows its system and host, and has no date.
     readonly property bool machine: hasItem && item.kind === "peer"
+    // The drive whose top folder is selected or shown, for its free space.
+    readonly property var drive: {
+        const shown = folderPane ? folderPane.paneBackend.path : ""
+        for (const d of places.devices)
+            if (d.free >= 0 && ((hasItem && d.path === item.path) || d.path === shown))
+                return d
+        return null
+    }
     function homeless(path) { return path.startsWith(places.home + "/") ? "~" + path.slice(places.home.length) : path }
     // Its type's name, and a picture's size or a text's opening lines once
     // they've been read off the UI thread.
@@ -144,6 +152,18 @@ Rectangle {
                     translator.language // Re-read when the language (and so the default locale) changes.
                     const when = pane.trashed ? pane.info.deleted : pane.noting ? null : pane.item.modified
                     return pane.hasItem && when ? when.toLocaleString(Qt.locale(), Locale.ShortFormat) : ""
+                }
+                color: theme.foreground
+                font.pixelSize: 12
+            }
+            Text { visible: !!pane.drive; text: qsTr("Free space"); color: theme.secondaryForeground; font.pixelSize: 12 }
+            Text {
+                visible: !!pane.drive
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignRight
+                text: {
+                    translator.language // Re-read when the language (and so its digits) changes.
+                    return pane.drive ? Format.size(pane.drive.free) : ""
                 }
                 color: theme.foreground
                 font.pixelSize: 12

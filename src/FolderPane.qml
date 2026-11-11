@@ -178,6 +178,19 @@ FocusScope {
     Shortcut { sequence: "Shift+S"; enabled: pane.keys; onActivated: pathBar.stepSort(-1) }
     Shortcut { sequences: ["F5", "Refresh"]; enabled: pane.active; onActivated: { backend.folder.reload(); places.refresh() } }
 
+    // A drive being ejected can't be in use: a pane showing a folder on it
+    // goes home, and its preview closes.
+    Connections {
+        target: places
+        function onReleasing(root) {
+            if (backend.path !== root && !backend.path.startsWith(root + "/"))
+                return
+            if (backend.previewing)
+                backend.togglePreview("")
+            backend.navigate(places.home)
+        }
+    }
+
     Connections {
         target: backend
         function onSelectRequested(name) { if (view.item) view.item.select(backend.folder.indexOf(name), false) }
