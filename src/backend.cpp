@@ -20,18 +20,23 @@ Backend::Backend(const QString &home, QObject *parent)
         m_notice.clear();
         emit noticeChanged();
     });
-    connect(&m_mounter, &Mounter::mounted, this, [this](const QString &root) {
+    connect(&m_mounter, &Mounter::mounted, this, [this](const QString &local) {
         setBusy({});
-        // Land in the matching home folder when the other machine has one,
+        // A machine lands in the matching home folder when it has one,
         // which on a tailnet of one person's machines it usually does.
-        const QString remoteHome = root + QDir::homePath();
-        navigate(QFileInfo(remoteHome).isDir() ? remoteHome : root);
+        const QString remoteHome = local + QDir::homePath();
+        const QFileInfo target(m_mountPeer && QFileInfo(remoteHome).isDir() ? remoteHome : local);
+        // An address can name a file, which opens its folder with it selected.
+        if (target.isDir() || !target.exists())
+            navigate(target.filePath());
+        else
+            showItem(target.filePath());
     });
     connect(&m_mounter, &Mounter::failed, this, [this](const QString &error) {
         setBusy({});
         // An empty error is the user cancelling the sign-in: nothing to report.
         if (!error.isEmpty())
-            setMessage(tr("Couldn't open %1 over SFTP: %2").arg(m_mountHost, error));
+            setMessage(tr("Couldn't connect to %1: %2").arg(m_mountName, error));
     });
     // The preview reports each file it steps to, and the grid follows.
     connect(&m_preview, &QProcess::readyReadStandardOutput, this, [this] {
@@ -212,9 +217,26 @@ void Backend::openPeer(const QString &host) {
     // SFTP over the tailnet: with Tailscale SSH on the other machine there
     // are no keys or passwords to manage, and GVfs makes the mount look like
     // any other folder.
-    m_mountHost = host;
-    setBusy(tr("Connecting to %1…").arg(host));
-    m_mounter.mount("sftp://" + host + "/");
+    connectTo("sftp://" + host + "/", host, true);
+}
+
+void Backend::connectTo(const QString &uri, const QString &name, bool peer) {
+    m_mountName = name;
+    m_mountPeer = peer;
+    setBusy(tr("Connecting to %1…").arg(name));
+    m_mounter.mount(uri, peer);
+}
+
+QString Backend::serverAddress(const QString &text) {
+    static const QStringList schemes{"sftp", "smb", "ftp", "dav", "davs"};
+    // Tolerant, so a path typed with spaces in it is escaped rather than
+    // refused; QUrl puts the scheme in lower case.
+    QUrl url(text.trimmed(), QUrl::TolerantMode);
+    if (!url.isValid() || !schemes.contains(url.scheme()) || url.host().isEmpty())
+        return {};
+    if (url.path().isEmpty())
+        url.setPath("/");
+    return url.toString(QUrl::FullyEncoded);
 }
 
 void Backend::showNotice(const QString &notice) {
@@ -321,6 +343,14 @@ QString Backend::expandTyped(const QString &text, const QString &home, const QSt
 }
 
 bool Backend::goTyped(const QString &text) {
+    // A server is mounted through GVfs, which also says where on the mount
+    // the address's path is (a WebDAV address's path can be part of the
+    // mount itself), and connecting goes there.
+    if (const QString address = serverAddress(text); !address.isEmpty()) {
+        if (!m_mounter.busy())
+            connectTo(address, QUrl(address).host(), false);
+        return true;
+    }
     // A view is typed as the path bar shows it, by its own name.
     if (const QString view = text.trimmed(); FolderModel::isView(view)) {
         navigate(view);

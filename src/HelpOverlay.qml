@@ -23,7 +23,7 @@ Rectangle {
         ["Backspace", qsTr("Go to the parent folder")],
         ["Alt+← / Alt+→", qsTr("Back / forward (or the mouse's thumb buttons)")],
         ["Alt+Home", qsTr("Go home")],
-        ["Ctrl+L", qsTr("Type a path (Tab completes)")],
+        ["Ctrl+L", qsTr("Type a path, or a server's address like sftp://host/ (Tab completes)")],
         ["/", qsTr("Search this folder and below")],
         ["Ctrl+1 / 2 / 3", qsTr("Grid, list or columns")],
         ["Ctrl+= / Ctrl+- / Ctrl+0", qsTr("Bigger, smaller or normal tiles (or Ctrl+scroll)")],

@@ -18,11 +18,21 @@ struct MounterCallbacks {
     // address, and both list "Log In Anyway" first. A tailnet machine is
     // reached over WireGuard and already authenticated by Tailscale, so the
     // answer is always yes. A changed key for a known machine never gets
-    // here: ssh refuses it outright.
-    static void question(GMountOperation *op, const char *, const char **, gpointer) {
+    // here: ssh refuses it outright. Any other server's questions (a WebDAV
+    // server's certificate that can't be verified, too) are the user's.
+    static void question(GMountOperation *op, const char *message, const char **choices, gpointer data) {
         g_signal_stop_emission_by_name(op, "ask-question");
-        g_mount_operation_set_choice(op, 0);
-        g_mount_operation_reply(op, G_MOUNT_OPERATION_HANDLED);
+        auto *self = static_cast<Mounter *>(data);
+        if (self->m_trusted) {
+            g_mount_operation_set_choice(op, 0);
+            g_mount_operation_reply(op, G_MOUNT_OPERATION_HANDLED);
+            return;
+        }
+        self->m_prompt = QString::fromUtf8(message).trimmed();
+        self->m_choices.clear();
+        for (const char **choice = choices; choice && *choice; ++choice)
+            self->m_choices << QString::fromUtf8(*choice);
+        self->setAsking(true);
     }
 
     static void password(GMountOperation *op, const char *message, const char *user, const char *,
@@ -79,9 +89,10 @@ Mounter::~Mounter() {
     finish();
 }
 
-void Mounter::mount(const QString &uri) {
+void Mounter::mount(const QString &uri, bool trusted) {
     if (m_operation)
         return;
+    m_trusted = trusted;
     GFile *file = g_file_new_for_uri(uri.toUtf8().constData());
     m_operation = g_mount_operation_new();
     g_signal_connect(m_operation, "ask-question", G_CALLBACK(MounterCallbacks::question), this);
@@ -107,6 +118,14 @@ void Mounter::providePassword(const QString &user, const QString &password) {
     g_mount_operation_reply(m_operation, G_MOUNT_OPERATION_HANDLED);
 }
 
+void Mounter::choose(int choice) {
+    if (!m_operation || !m_asking || choice < 0 || choice >= m_choices.size())
+        return;
+    setAsking(false);
+    g_mount_operation_set_choice(m_operation, choice);
+    g_mount_operation_reply(m_operation, G_MOUNT_OPERATION_HANDLED);
+}
+
 void Mounter::cancel() {
     if (!m_operation || !m_asking)
         return;
@@ -116,8 +135,10 @@ void Mounter::cancel() {
 
 void Mounter::setAsking(bool asking) {
     m_asking = asking;
-    if (!asking)
+    if (!asking) {
         m_prompt.clear();
+        m_choices.clear();
+    }
     emit askingChanged();
 }
 

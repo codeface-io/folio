@@ -2128,6 +2128,25 @@ private slots:
         QCOMPARE(Backend::mountLabel("sftp:host=studio.example.ts.net,user=me"), QString("studio"));
         QCOMPARE(Backend::mountLabel("sftp:host=files.example.com"), QString("files.example.com"));
         QCOMPARE(Backend::mountLabel("smb-share:server=nas,share=media"), QString("nas"));
+        QCOMPARE(Backend::mountLabel("ftp:host=ftp.example.com"), QString("ftp.example.com"));
+        QCOMPARE(Backend::mountLabel("dav:host=cloud.example.com,ssl=true,prefix=%2Fremote.php"), QString("cloud.example.com"));
+    }
+
+    void typedServerAddressesAreMounted()
+    {
+        // What's typed is what's mounted, cleaned up for GIO: GVfs knows
+        // where on the mount the path is, which for WebDAV can be part of
+        // the mount itself.
+        QCOMPARE(Backend::serverAddress("sftp://nas"), QString("sftp://nas/"));
+        QCOMPARE(Backend::serverAddress("  SFTP://me@nas:2222/srv/My Files "), QString("sftp://me@nas:2222/srv/My%20Files"));
+        QCOMPARE(Backend::serverAddress("smb://nas/media/Films"), QString("smb://nas/media/Films"));
+        QCOMPARE(Backend::serverAddress("ftp://ftp.example.com/pub/"), QString("ftp://ftp.example.com/pub/"));
+        QCOMPARE(Backend::serverAddress("davs://cloud.example.com/remote.php/dav/files/me"),
+                 QString("davs://cloud.example.com/remote.php/dav/files/me"));
+        QCOMPARE(Backend::serverAddress("dav://10.0.0.5:8080"), QString("dav://10.0.0.5:8080/"));
+        // Paths, other schemes and addresses without a server are not.
+        for (const char *text : {"~/Work", "/etc", "Work/folio", "file:///etc", "http://example.com", "sftp://", "smb:/nas"})
+            QVERIFY2(Backend::serverAddress(text).isEmpty(), text);
     }
 
     void placesListOnlyPhysicalDrives()

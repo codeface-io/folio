@@ -64,8 +64,9 @@ public:
     // what "Show in folder" asked for); empty means the first item.
     Q_INVOKABLE QString takeSelection();
     // The path as it's shown for editing (~ for home), going to a typed
-    // path (a folder, or a file to select in its folder; ~ works), and
-    // completing the last part of one to a folder name.
+    // path (a folder, or a file to select in its folder; ~ works; or a
+    // server's address, connecting to it), and completing the last part of
+    // one to a folder name.
     Q_INVOKABLE QString typedPath() const;
     Q_INVOKABLE bool goTyped(const QString &text);
     Q_INVOKABLE QString completePath(const QString &text) const;
@@ -85,6 +86,9 @@ public:
     static QString expandTyped(const QString &text, const QString &home, const QString &current);
     static QString complete(const QString &text, const QString &home, const QString &current);
     static QString mountLabel(const QString &mountFolder);
+    // A server address (sftp://, smb://, ftp://, dav://, davs://) as GIO
+    // mounts it, or empty when the text isn't one.
+    static QString serverAddress(const QString &text);
 
 signals:
     void pathChanged();
@@ -107,6 +111,9 @@ private:
     bool go(const QString &path, bool record);
     void setMessage(const QString &message);
     void setBusy(const QString &busy);
+    // Mounts a server's address and goes where it points once it's mounted;
+    // a tailnet machine's home, when it has one like ours.
+    void connectTo(const QString &uri, const QString &name, bool peer);
 
     QString m_home;
     FolderModel m_folder;
@@ -118,7 +125,10 @@ private:
     QString m_busy;
     QString m_pendingSelection;
     Mounter m_mounter;
-    QString m_mountHost;
+    // What's being connected to, as the window names it, and whether it's
+    // a tailnet machine, which lands in the matching home folder.
+    QString m_mountName;
+    bool m_mountPeer = false;
     QProcess m_preview;
     // Set while Folio closes the preview itself, which isn't a crash.
     bool m_closingPreview = false;
