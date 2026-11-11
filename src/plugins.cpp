@@ -470,14 +470,16 @@ void Plugins::poll(const QString &plugin) {
     if (!m || m->poll.isEmpty() || m_polling.contains(plugin))
         return;
     m_polling.insert(plugin);
-    auto *watcher = new QFutureWatcher<Run>(this);
+    // Read in the pool too: a megabyte of JSON takes long enough to parse
+    // that the window would skip frames over it.
+    using Polled = std::pair<Run, std::optional<Output>>;
+    auto *watcher = new QFutureWatcher<Polled>(this);
     connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, plugin] {
         watcher->deleteLater();
         m_polling.remove(plugin);
         if (!manifest(plugin))
             return;
-        const Run run = watcher->result();
-        const auto output = run.ok() ? parseOutput(run.out) : std::nullopt;
+        const auto [run, output] = watcher->result();
         // A failed poll counts as an empty answer, and says why once each
         // time the plugin goes from working to failing.
         if (output) {
@@ -492,7 +494,8 @@ void Plugins::poll(const QString &plugin) {
         rebuild();
     });
     watcher->setFuture(QtConcurrent::run(&m_pool, [plugin = *m, environment = environment(*m), stop = m_stop] {
-        return execute(plugin, plugin.poll, environment, pollTimeout, stop.get());
+        const Run run = execute(plugin, plugin.poll, environment, pollTimeout, stop.get());
+        return Polled{run, run.ok() ? parseOutput(run.out) : std::nullopt};
     }));
 }
 
