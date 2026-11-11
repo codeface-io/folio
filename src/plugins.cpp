@@ -205,6 +205,13 @@ QList<Plugins::Manifest> Plugins::read(const QStringList &folders, const QString
 
     QList<Manifest> manifests;
     for (auto it = dirs.cbegin(); it != dirs.cend(); ++it) {
+        // Its commands run as the user, so only the user (or root, for a
+        // package's) may have put them there.
+        const QFileInfo dir(it.value());
+        if ((dir.ownerId() != ::getuid() && dir.ownerId() != 0) || dir.permissions().testFlag(QFileDevice::WriteOther)) {
+            complain(it.key(), "isn't read: " + it.value() + " belongs to someone else, or anyone may change it");
+            continue;
+        }
         QFile file(it.value() + "/manifest.json");
         if (!file.open(QIODevice::ReadOnly)) {
             complain(it.key(), "has no manifest.json in " + it.value());

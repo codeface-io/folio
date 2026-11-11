@@ -1580,6 +1580,10 @@ private slots:
         // Only lowercase letters, digits and dashes make an id.
         writePlugin(folder.path(), "Not_An_Id", R"({"folio": 1})");
         QDir(folder.path()).mkpath("no-manifest");
+        // A folder anyone may write to could hold anyone's commands.
+        writePlugin(folder.path(), "open-to-all", R"({"folio": 1})");
+        QFile::setPermissions(folder.filePath("open-to-all"), QFile::permissions(folder.filePath("open-to-all"))
+                                                                  | QFileDevice::WriteOther);
         QStringList ids;
         for (const auto &m : Plugins::read({folder.path(), folder.filePath("missing")}, "en"))
             ids << m.id;
