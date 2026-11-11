@@ -4,7 +4,7 @@ import QtQuick.Layouts
 
 // Asks what to do when a name is already taken where files are going,
 // before anything is copied or moved: replace what's there (it goes to the
-// trash, where it can be restored from), merge a folder into the folder, skip
+// trash, so undo can bring it back), merge a folder into the folder, skip
 // it, or keep both, the new one under a "(copy)" name. Keep Both is the
 // default; Escape or a click outside cancels the whole operation.
 FolioDialog {

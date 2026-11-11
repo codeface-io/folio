@@ -1289,8 +1289,10 @@ private slots:
         }
         const QStringList paths{from.filePath("replace.txt"), from.filePath("skip.txt"), from.filePath("both.txt")};
         QString error;
+        QList<FileOps::Step> steps;
         const QStringList made = FileOps::transfer(paths, to.path(), FileOps::Copy, &error,
-                                                   {{paths[0], FileOps::Replace}, {paths[1], FileOps::Skip}, {paths[2], FileOps::KeepBoth}});
+                                                   {{paths[0], FileOps::Replace}, {paths[1], FileOps::Skip}, {paths[2], FileOps::KeepBoth}},
+                                                   nullptr, &steps);
         QVERIFY2(error.isEmpty(), qPrintable(error));
         QCOMPARE(made, QStringList({"replace.txt", "both (copy).txt"}));
         QCOMPARE(contents(to.filePath("replace.txt")), QByteArray("new"));
@@ -1301,6 +1303,8 @@ private slots:
         const QString trashed = data.filePath("Trash/files/replace.txt");
         QCOMPARE(contents(trashed), QByteArray("old"));
         QCOMPARE(FileOps::originalPath(trashed), to.filePath("replace.txt"));
+        QCOMPARE(steps.size(), 3);
+        QCOMPARE(steps[0].other, trashed);
     }
 
     void fileOpsMergeFolders()
@@ -1373,6 +1377,149 @@ private slots:
         QVERIFY(ops.clash().isEmpty());
         QVERIFY(ops.busy().isEmpty());
         QVERIFY(!QFile::exists(fresh.filePath("z.txt")));
+    }
+
+    void undoAndRedoRenameMoveAndTrash()
+    {
+        QTemporaryDir data, dir;
+        const auto restore = dataHomeAt(data.path());
+        FileOps::forgetHistory();
+        write(dir.filePath("a.txt"), "a");
+        write(dir.filePath("c.txt"), "c");
+        QDir(dir.path()).mkdir("sub");
+        FileOps ops;
+        QSignalSpy notice(&ops, &FileOps::notice), failed(&ops, &FileOps::failed);
+        QCOMPARE(ops.undoName(), QString());
+
+        QCOMPARE(ops.rename(dir.filePath("a.txt"), "b.txt"), QString());
+        QCOMPARE(ops.undoName(), QString("Undo Rename"));
+        ops.undo();
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QVERIFY(QFile::exists(dir.filePath("a.txt")));
+        QVERIFY(!QFile::exists(dir.filePath("b.txt")));
+        QCOMPARE(notice.last().first().toString(), QString("Undid renaming a.txt."));
+        ops.redo();
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QVERIFY(QFile::exists(dir.filePath("b.txt")));
+        QCOMPARE(notice.last().first().toString(), QString("Redid renaming a.txt."));
+
+        ops.cut({dir.filePath("b.txt"), dir.filePath("c.txt")});
+        ops.paste(dir.filePath("sub"));
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QVERIFY(QFile::exists(dir.filePath("sub/b.txt")));
+        QCOMPARE(ops.undoName(), QString("Undo Move"));
+        ops.undo();
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QVERIFY(QFile::exists(dir.filePath("b.txt")));
+        QVERIFY(QFile::exists(dir.filePath("c.txt")));
+        QVERIFY(QDir(dir.filePath("sub")).isEmpty());
+        QCOMPARE(notice.last().first().toString(), QString("Undid moving 2 items."));
+        ops.redo();
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QVERIFY(QFile::exists(dir.filePath("sub/b.txt")));
+        QVERIFY(QFile::exists(dir.filePath("sub/c.txt")));
+
+        ops.trash({dir.filePath("sub/b.txt"), dir.filePath("sub/c.txt")});
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QVERIFY(QDir(dir.filePath("sub")).isEmpty());
+        QCOMPARE(ops.undoName(), QString("Undo Delete"));
+        ops.undo();
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QCOMPARE(contents(dir.filePath("sub/b.txt")), QByteArray("a"));
+        QCOMPARE(contents(dir.filePath("sub/c.txt")), QByteArray("c"));
+        QVERIFY(QDir(data.filePath("Trash/files")).isEmpty());
+        QVERIFY(QDir(data.filePath("Trash/info")).isEmpty());
+        QCOMPARE(notice.last().first().toString(), QString("Undid moving 2 items to the trash."));
+        ops.redo();
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QVERIFY(QDir(dir.filePath("sub")).isEmpty());
+        QCOMPARE(QDir(data.filePath("Trash/files")).entryList(QDir::Files), QStringList({"b.txt", "c.txt"}));
+        QCOMPARE(failed.count(), 0);
+
+        // Undo goes back through them all, the newest first.
+        for (int i = 0; i < 3; ++i) {
+            ops.undo();
+            QTRY_VERIFY(ops.busy().isEmpty());
+        }
+        QCOMPARE(contents(dir.filePath("a.txt")), QByteArray("a"));
+        QCOMPARE(contents(dir.filePath("c.txt")), QByteArray("c"));
+        QCOMPARE(ops.undoName(), QString());
+        QCOMPARE(failed.count(), 0);
+    }
+
+    void undoAndRedoPasteAndReplace()
+    {
+        // A copy is undone by moving it to the trash, and redone by
+        // bringing it back; a replace puts the replaced one back too.
+        QTemporaryDir data, from, to;
+        const auto restore = dataHomeAt(data.path());
+        FileOps::forgetHistory();
+        write(from.filePath("a.txt"), "new");
+        write(from.filePath("b.txt"), "new");
+        write(from.filePath("r.txt"), "new");
+        write(to.filePath("r.txt"), "old");
+        FileOps ops;
+        QSignalSpy notice(&ops, &FileOps::notice), failed(&ops, &FileOps::failed);
+        ops.copy({from.filePath("a.txt"), from.filePath("b.txt")});
+        ops.paste(to.path());
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QCOMPARE(ops.undoName(), QString("Undo Copy"));
+        ops.undo();
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QVERIFY(!QFile::exists(to.filePath("a.txt")));
+        QVERIFY(!QFile::exists(to.filePath("b.txt")));
+        QCOMPARE(contents(data.filePath("Trash/files/a.txt")), QByteArray("new"));
+        QCOMPARE(notice.last().first().toString(), QString("Undid copying 2 items."));
+        ops.redo();
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QCOMPARE(contents(to.filePath("a.txt")), QByteArray("new"));
+        QCOMPARE(contents(to.filePath("b.txt")), QByteArray("new"));
+        QVERIFY(QDir(data.filePath("Trash/files")).isEmpty());
+
+        ops.copy({from.filePath("r.txt")});
+        ops.paste(to.path());
+        ops.answerClash("replace", false);
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QCOMPARE(contents(to.filePath("r.txt")), QByteArray("new"));
+        ops.undo();
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QCOMPARE(contents(to.filePath("r.txt")), QByteArray("old"));
+        // The new one went to the trash while the old one was still there.
+        QCOMPARE(QDir(data.filePath("Trash/files")).entryList(QDir::Files), QStringList({"r.txt.2"}));
+        QCOMPARE(contents(data.filePath("Trash/files/r.txt.2")), QByteArray("new"));
+        ops.redo();
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QCOMPARE(contents(to.filePath("r.txt")), QByteArray("new"));
+        QCOMPARE(contents(data.filePath("Trash/files/r.txt")), QByteArray("old"));
+        QCOMPARE(failed.count(), 0);
+    }
+
+    void undoRefusesWhatsChangedSince()
+    {
+        // Undo checks everything is still where the change left it, and
+        // that nothing's in the way, before it touches anything; refused,
+        // the change stays there to undo.
+        QTemporaryDir dir;
+        FileOps::forgetHistory();
+        write(dir.filePath("a.txt"), "a");
+        FileOps ops;
+        QSignalSpy failed(&ops, &FileOps::failed);
+        QCOMPARE(ops.rename(dir.filePath("a.txt"), "b.txt"), QString());
+        QVERIFY(QFile::rename(dir.filePath("b.txt"), dir.filePath("c.txt")));
+        ops.undo();
+        QVERIFY(ops.busy().isEmpty());
+        QCOMPARE(failed.count(), 1);
+        QCOMPARE(failed.last().first().toString(), QString("Can't undo that: b.txt isn't where it was left."));
+        QCOMPARE(ops.undoName(), QString("Undo Rename"));
+
+        QVERIFY(QFile::rename(dir.filePath("c.txt"), dir.filePath("b.txt")));
+        write(dir.filePath("a.txt"), "newer");
+        ops.undo();
+        QCOMPARE(failed.last().first().toString(),
+                 QString("Can't undo that: a.txt already exists in %1.").arg(QFileInfo(dir.path()).fileName()));
+        QCOMPARE(contents(dir.filePath("a.txt")), QByteArray("newer"));
+        QVERIFY(QFile::exists(dir.filePath("b.txt")));
+        QCOMPARE(ops.undoName(), QString("Undo Rename"));
     }
 
     void kindsFromMimeTypes()

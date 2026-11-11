@@ -3,8 +3,8 @@ import QtQuick
 // The right-click menu. On an item: Open, Open With (each app that can),
 // Preview, Rename, Duplicate, Copy, Cut, Paste Into, Copy Path, Compress,
 // Share (Dropbox link, Taildrop, LocalSend: whichever are available), Pin,
-// Terminal, Delete. On empty space: Paste, New Folder, Copy Path, Terminal,
-// hidden files. In the trash: Restore, Empty Trash and Delete Permanently,
+// Terminal, Delete. On empty space: Undo, Paste, New Folder, Copy Path,
+// Terminal, hidden files. In the trash: Restore, Empty Trash and Delete Permanently,
 // without the entries that change files. On a tailnet machine: Open, and
 // nothing for files. Entries show their keys, so the menu also teaches the
 // shortcuts.
@@ -60,6 +60,14 @@ FolioMenu {
             popup()
     }
 
+    // Names the change it undoes ("Undo Rename"), whichever window made it.
+    FolioMenuItem {
+        shown: !fileMenu.forItem && fileOps.undoName.length > 0
+        text: fileOps.undoName
+        keys: "Ctrl+Z"
+        onTriggered: fileOps.undo()
+    }
+    MenuLine { shown: !fileMenu.forItem && fileOps.undoName.length > 0 }
     FolioMenuItem {
         shown: fileMenu.forItem && fileMenu.trashView
         text: fileMenu.forSelection ? qsTr("Restore %n Items", "", fileMenu.paths.length) : qsTr("Restore")

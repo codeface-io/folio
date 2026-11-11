@@ -28,9 +28,26 @@
 #include <gio/gio.h>
 #define signals Q_SIGNALS
 
+// What's been done and undone in this Folio, newest last, shared by every
+// window's FileOps, each told when they change. Kept in memory only, and
+// only the latest few.
+static QList<FileOps::Change> s_undo, s_redo;
+static QList<FileOps *> s_everyone;
+static constexpr int historyLength = 50;
+
+static void tellEveryone() {
+    for (FileOps *ops : s_everyone)
+        emit ops->historyChanged();
+}
+
 FileOps::FileOps(QObject *parent) : QObject(parent) {
     if (auto *clipboard = QGuiApplication::clipboard())
         connect(clipboard, &QClipboard::dataChanged, this, &FileOps::clipboardChanged);
+    s_everyone << this;
+}
+
+FileOps::~FileOps() {
+    s_everyone.removeOne(this);
 }
 
 QMimeData *FileOps::mimeDataFor(const QStringList &paths, bool cut) {
@@ -321,13 +338,31 @@ static bool put(const QString &from, const QString &to, bool move, QString *erro
     return true;
 }
 
+// Notes what putting `from` at `to` changed, for undo: a move that finished
+// can be moved back, and a copy (even one that stopped partway) can go to
+// the trash.
+static void note(QList<FileOps::Step> *steps, const QString &from, const QString &to, bool move, bool finished) {
+    if (!steps)
+        return;
+    if (move && finished)
+        *steps << FileOps::Step{false, to, from};
+    else if (!move && taken(to))
+        *steps << FileOps::Step{true, to, {}};
+}
+
 // Sends what's at `path` to the trash to make room for what replaces it.
-static bool makeRoom(const QString &path, QString *error) {
+static bool makeRoom(const QString &path, QString *error, QList<FileOps::Step> *steps) {
     QString why;
-    if (FileOps::trashOne(path, &why).isEmpty() && !why.isEmpty()) {
+    const QString trashed = FileOps::trashOne(path, &why);
+    // In the trash, but not found there, it can't be brought back by undo.
+    if (trashed.isEmpty() && why.isEmpty())
+        return true;
+    if (trashed.isEmpty()) {
         *error = QObject::tr("Couldn't move %1 to the trash to replace it: %2").arg(QFileInfo(path).fileName(), why);
         return false;
     }
+    if (steps)
+        *steps << FileOps::Step{true, path, trashed};
     return true;
 }
 
@@ -335,7 +370,8 @@ static bool makeRoom(const QString &path, QString *error) {
 // there: what isn't there yet goes in, a folder onto a folder merges in
 // turn, and anything else in the way goes to the trash first. Moving, the
 // folder goes once it's empty.
-static bool merge(const QString &from, const QString &to, bool move, QString *error, FileOps::Job *job) {
+static bool merge(const QString &from, const QString &to, bool move, QString *error, FileOps::Job *job,
+                  QList<FileOps::Step> *steps) {
     if (!QFileInfo(from).isReadable()) {
         *error = QObject::tr("Couldn't read %1.").arg(QFileInfo(from).fileName());
         return false;
@@ -346,13 +382,15 @@ static bool merge(const QString &from, const QString &to, bool move, QString *er
             return false;
         const QString there = QDir(to).filePath(entry.fileName());
         if (taken(there) && isFolder(entry.filePath()) && isFolder(there)) {
-            if (!merge(entry.filePath(), there, move, error, job))
+            if (!merge(entry.filePath(), there, move, error, job, steps))
                 return false;
             continue;
         }
-        if (taken(there) && !makeRoom(there, error))
+        if (taken(there) && !makeRoom(there, error, steps))
             return false;
-        if (!put(entry.filePath(), there, move, error, job))
+        const bool finished = put(entry.filePath(), there, move, error, job);
+        note(steps, entry.filePath(), there, move, finished);
+        if (!finished)
             return false;
     }
     if (move)
@@ -385,7 +423,7 @@ QStringList FileOps::clashes(const QStringList &paths, const QString &folder, Mo
 }
 
 QStringList FileOps::transfer(const QStringList &paths, const QString &folder, Mode mode, QString *error,
-                              const QHash<QString, Choice> &choices, Job *job) {
+                              const QHash<QString, Choice> &choices, Job *job, QList<Step> *steps) {
     QStringList made;
     const QString target = QDir::cleanPath(folder);
     const QStringList outer = outermost(paths);
@@ -420,7 +458,7 @@ QStringList FileOps::transfer(const QStringList &paths, const QString &folder, M
                 continue;
             }
             if (choice == Replace && isFolder(path) && isFolder(there)) {
-                const bool merged = merge(path, there, move, error, job);
+                const bool merged = merge(path, there, move, error, job, steps);
                 made << name;
                 if (!merged)
                     break;
@@ -430,14 +468,16 @@ QStringList FileOps::transfer(const QStringList &paths, const QString &folder, M
             }
             if (choice == KeepBoth)
                 name = freeName(target, name);
-            else if (!makeRoom(there, error))
+            else if (!makeRoom(there, error, steps))
                 break;
         }
         const QString destination = QDir(target).filePath(name);
         // A single folder counts what's in it, so there's more to count.
         if (job && outer.size() == 1 && isFolder(path))
             job->countIn = QDir::cleanPath(path);
-        if (!put(path, destination, move, error, job)) {
+        const bool finished = put(path, destination, move, error, job);
+        note(steps, path, destination, move, finished);
+        if (!finished) {
             // What arrived of a move is now the only copy of it, and what was
             // copied before a cancel stays: either is shown.
             if (taken(destination) && (move || error->isEmpty()))
@@ -599,11 +639,15 @@ void FileOps::dropClash() {
 }
 
 namespace {
-// What work hands back from the worker: what it made, and what went wrong.
+// What work hands back from the worker: what it made, what went wrong, and
+// the changes it made, for undo.
 struct Outcome {
     QStringList made;
     QString error;
     QStringList failures;
+    QList<FileOps::Step> steps;
+    // Undoing, how many changes are left that weren't undone.
+    qsizetype left = 0;
 };
 }
 
@@ -632,16 +676,19 @@ void FileOps::startTransfer(const QStringList &paths, const QString &folder, Mod
         },
         [paths, folder, mode, choices](Job &job) {
             Outcome result;
-            result.made = transfer(paths, folder, mode, &result.error, choices, &job);
+            result.made = transfer(paths, folder, mode, &result.error, choices, &job, &result.steps);
             return result;
         },
-        [this, paths, folder, releaseClipboard](const Outcome &result, const Job &job) {
+        [this, paths, folder, releaseClipboard, duplicating, moving](const Outcome &result, const Job &job) {
             // Only the cut that was pasted is let go of; something copied
             // while it moved stays on the clipboard.
             bool cut = false;
             if (releaseClipboard && result.error.isEmpty() && !job.cancelled
                 && pathsFrom(QGuiApplication::clipboard()->mimeData(), &cut) == paths && cut)
                 QGuiApplication::clipboard()->clear();
+            if (!result.steps.isEmpty())
+                remember({duplicating ? Duplicating : moving ? Moving : Copying,
+                          QFileInfo(paths.first()).fileName(), int(result.made.size()), result.steps});
             if (!result.error.isEmpty())
                 emit failed(result.error);
             else if (job.cancelled)
@@ -727,6 +774,7 @@ void FileOps::compress(const QStringList &selected) {
                 }
                 name = archiveName(paths, folder);
             }
+            remember({Compressing, name, 1, {Step{true, QDir(folder).filePath(name), {}}}});
             emit done(folder, name);
         });
     if (!process)
@@ -793,19 +841,19 @@ void FileOps::trash(const QStringList &paths) {
             for (const QString &path : outer) {
                 if (job.cancelled)
                     break;
-                GFile *file = g_file_new_for_path(path.toUtf8().constData());
-                GError *error = nullptr;
-                if (!g_file_trash(file, nullptr, &error)) {
-                    result.failures << QFileInfo(path).fileName() + (error ? QStringLiteral(" (") + QString::fromUtf8(error->message) + ")" : QString());
-                    if (error)
-                        g_error_free(error);
-                }
-                g_object_unref(file);
+                QString why;
+                // In the trash, but not found there, it can't be undone.
+                if (const QString trashed = trashOne(path, &why); !trashed.isEmpty())
+                    result.steps << Step{true, path, trashed};
+                else if (!why.isEmpty())
+                    result.failures << QFileInfo(path).fileName() + " (" + why + ")";
                 ++job.done;
             }
             return result;
         },
-        [this](const Outcome &result, const Job &job) {
+        [this, name = QFileInfo(paths.first()).fileName()](const Outcome &result, const Job &job) {
+            if (!result.steps.isEmpty())
+                remember({Trashing, name, int(result.steps.size()), result.steps});
             if (!result.failures.isEmpty())
                 emit failed(tr("Couldn't move to the trash: %1").arg(result.failures.join(", ")));
             else if (job.cancelled)
@@ -835,10 +883,11 @@ static QString findTrashed(const QString &original) {
 }
 
 // The home trash is filled here rather than by GIO, which doesn't say where
-// in the trash an item went. Each item gets its note first, under a name no
-// other item can take at the same time, then goes in, as the freedesktop
-// Trash spec has it. Other drives' trash folders, with their own rules, are
-// GIO's to fill, and the item is looked for there once it's gone.
+// in the trash an item went, and undo needs to know that to bring it back.
+// Each item gets its note first, under a name no other item can take at
+// the same time, then goes in, as the freedesktop Trash spec has it. Other
+// drives' trash folders, with their own rules, are GIO's to fill, and the
+// item is looked for there once it's gone.
 QString FileOps::trashOne(const QString &path, QString *error) {
     const QFileInfo item(path);
     const QString trash = homeTrash();
@@ -1067,9 +1116,18 @@ void FileOps::restore(const QStringList &paths) {
         });
 }
 
+// Deleting for good can't be undone, and what's deleted can't be redone
+// either, so the redos go. The undos stay: those that need what's gone say
+// so when they're tried.
+static void forgetRedos() {
+    s_redo.clear();
+    tellEveryone();
+}
+
 void FileOps::deleteForever(const QStringList &paths) {
     if (paths.isEmpty() || !idle())
         return;
+    forgetRedos();
     const int count = paths.size();
     inBackground(
         [count](const Job &job) {
@@ -1099,6 +1157,7 @@ void FileOps::deleteForever(const QStringList &paths) {
 void FileOps::emptyTrash() {
     if (!idle())
         return;
+    forgetRedos();
     inBackground(
         [](const Job &job) {
             return counting(job, tr("Emptying the trash: %1 of %n items…", "", job.total), tr("Emptying the trash…"));
@@ -1135,6 +1194,7 @@ QString FileOps::rename(const QString &path, const QString &name) {
     if (!QFile::rename(path, destination))
         return QFileInfo::exists(destination) ? tr("%1 already exists here.").arg(clean)
                                               : tr("Couldn't rename %1.").arg(info.fileName());
+    remember({Renaming, info.fileName(), 1, {Step{false, destination, path}}});
     emit done(info.absolutePath(), clean);
     return {};
 }
@@ -1151,7 +1211,199 @@ void FileOps::newFolder(const QString &folder) {
         emit failed(tr("Couldn't create a folder here."));
         return;
     }
+    remember({MakingFolder, name, 1, {Step{true, QDir(folder).filePath(name), {}}}});
     emit done(folder, name);
+}
+
+// Undo and redo.
+
+void FileOps::remember(const Change &change) {
+    s_undo << change;
+    if (s_undo.size() > historyLength)
+        s_undo.removeFirst();
+    s_redo.clear();
+    tellEveryone();
+}
+
+void FileOps::forgetHistory() {
+    s_undo.clear();
+    s_redo.clear();
+    tellEveryone();
+}
+
+QString FileOps::undoName() const {
+    if (s_undo.isEmpty())
+        return {};
+    switch (s_undo.last().kind) {
+    case Renaming: return tr("Undo Rename");
+    case Moving: return tr("Undo Move");
+    case Copying: return tr("Undo Copy");
+    case Duplicating: return tr("Undo Duplicate");
+    case MakingFolder: return tr("Undo New Folder");
+    case Compressing: return tr("Undo Compress");
+    case Trashing: return tr("Undo Delete");
+    }
+    return {};
+}
+
+// What undoing or redoing `change` did, in a sentence.
+static QString didMessage(const FileOps::Change &change, bool undoing) {
+    const QString &name = change.name;
+    const int n = change.count;
+    switch (change.kind) {
+    case FileOps::Renaming:
+        return undoing ? FileOps::tr("Undid renaming %1.").arg(name) : FileOps::tr("Redid renaming %1.").arg(name);
+    case FileOps::Moving:
+        return undoing ? FileOps::tr("Undid moving %n items.", "", n) : FileOps::tr("Redid moving %n items.", "", n);
+    case FileOps::Copying:
+        return undoing ? FileOps::tr("Undid copying %n items.", "", n) : FileOps::tr("Redid copying %n items.", "", n);
+    case FileOps::Duplicating:
+        return undoing ? FileOps::tr("Undid duplicating %1.").arg(name) : FileOps::tr("Redid duplicating %1.").arg(name);
+    case FileOps::MakingFolder:
+        return undoing ? FileOps::tr("Undid making %1.").arg(name) : FileOps::tr("Redid making %1.").arg(name);
+    case FileOps::Compressing:
+        return undoing ? FileOps::tr("Undid compressing into %1.").arg(name)
+                       : FileOps::tr("Redid compressing into %1.").arg(name);
+    case FileOps::Trashing:
+        return undoing ? FileOps::tr("Undid moving %n items to the trash.", "", n)
+                       : FileOps::tr("Redid moving %n items to the trash.", "", n);
+    }
+    return {};
+}
+
+// Where a step's item is now, and where flipping it takes it (empty for
+// into the trash, where it goes under a name found then).
+static std::pair<QString, QString> ends(const FileOps::Step &step) {
+    if (!step.trash)
+        return {step.path, step.other};
+    if (step.other.isEmpty())
+        return {step.path, {}};
+    return {step.other, step.path};
+}
+
+// Whether everything is where `steps` left it, so flipping them (the last
+// first) does what it says: each item where it was put, and nothing in the
+// place it goes back to. A sentence saying what's changed when not.
+static QString unchanged(const QList<FileOps::Step> &steps, bool undoing) {
+    // What the steps before have moved, which isn't on disk yet.
+    QHash<QString, bool> after;
+    const auto there = [&](const QString &path) {
+        const auto it = after.constFind(path);
+        return it != after.cend() ? *it : taken(path);
+    };
+    for (auto step = steps.crbegin(); step != steps.crend(); ++step) {
+        const auto [now, next] = ends(*step);
+        if (!there(now)) {
+            const QString name = QFileInfo(step->path).fileName();
+            return undoing ? FileOps::tr("Can't undo that: %1 isn't where it was left.").arg(name)
+                           : FileOps::tr("Can't redo that: %1 isn't where it was left.").arg(name);
+        }
+        if (!next.isEmpty() && there(next)) {
+            const QFileInfo blocked(next);
+            const QString folder = QFileInfo(blocked.absolutePath()).fileName();
+            return undoing ? FileOps::tr("Can't undo that: %1 already exists in %2.").arg(blocked.fileName(), folder)
+                           : FileOps::tr("Can't redo that: %1 already exists in %2.").arg(blocked.fileName(), folder);
+        }
+        after[now] = false;
+        if (!next.isEmpty())
+            after[next] = true;
+    }
+    return {};
+}
+
+// Makes the change in `step` the other way (back, or forward again),
+// turning `step` around to match.
+static bool flip(FileOps::Step &step, QString *error, FileOps::Job *job) {
+    if (!step.trash) {
+        // The folder it came from may have gone with it, as a merge's does.
+        QDir().mkpath(QFileInfo(step.other).absolutePath());
+        if (!put(step.path, step.other, true, error, job))
+            return false;
+        std::swap(step.path, step.other);
+        return true;
+    }
+    if (step.other.isEmpty()) {
+        QString why;
+        step.other = FileOps::trashOne(step.path, &why);
+        if (step.other.isEmpty())
+            *error = FileOps::tr("Couldn't move %1 to the trash: %2").arg(QFileInfo(step.path).fileName(), why);
+        return !step.other.isEmpty();
+    }
+    const QString back = FileOps::restoreOne(step.other, error, job);
+    if (back.isEmpty())
+        return false;
+    step.path = back;
+    step.other.clear();
+    return true;
+}
+
+void FileOps::undo() {
+    step(true);
+}
+
+void FileOps::redo() {
+    step(false);
+}
+
+void FileOps::step(bool undoing) {
+    QList<Change> &from = undoing ? s_undo : s_redo;
+    if (from.isEmpty()) {
+        emit notice(undoing ? tr("There's nothing to undo.") : tr("There's nothing to redo."));
+        return;
+    }
+    if (!idle())
+        return;
+    if (const QString problem = unchanged(from.last().steps, undoing); !problem.isEmpty()) {
+        emit failed(problem);
+        return;
+    }
+    // Taken off while it runs, so another window can't run it too.
+    const Change change = from.takeLast();
+    tellEveryone();
+    inBackground(
+        [undoing](const Job &job) {
+            return undoing ? counting(job, tr("Undoing %1 of %n items…", "", job.total), tr("Undoing…"))
+                           : counting(job, tr("Redoing %1 of %n items…", "", job.total), tr("Redoing…"));
+        },
+        [steps = change.steps](Job &job) mutable {
+            Outcome result;
+            job.total = steps.size();
+            result.left = steps.size();
+            while (result.left > 0 && !job.cancelled && flip(steps[result.left - 1], &result.error, &job)) {
+                --result.left;
+                ++job.done;
+            }
+            result.steps = steps;
+            return result;
+        },
+        [this, change, undoing](const Outcome &result, const Job &job) {
+            // What was flipped goes over to the other list, turned around so
+            // it flips back the last first too; what wasn't stays.
+            QList<Change> &back = undoing ? s_undo : s_redo, &forth = undoing ? s_redo : s_undo;
+            if (result.left > 0)
+                back << Change{change.kind, change.name, change.count, result.steps.mid(0, result.left)};
+            if (result.left < result.steps.size()) {
+                QList<Step> flipped = result.steps.mid(result.left);
+                std::reverse(flipped.begin(), flipped.end());
+                forth << Change{change.kind, change.name, change.count, flipped};
+                if (forth.size() > historyLength)
+                    forth.removeFirst();
+            }
+            tellEveryone();
+            if (!result.error.isEmpty())
+                emit failed(result.error);
+            else if (job.cancelled && result.left > 0)
+                sayStopped(job);
+            else
+                emit notice(didMessage(change, undoing));
+            // What's back in a folder is selected there, as after a paste.
+            for (const Step &step : result.steps.mid(result.left))
+                if (!step.trash || step.other.isEmpty()) {
+                    const QFileInfo item(step.path);
+                    emit done(item.absolutePath(), item.fileName());
+                    break;
+                }
+        });
 }
 
 QString FileOps::defaultAppFor(const QString &path) {

@@ -16,6 +16,14 @@
   "Deleting %1 of %n items…": { "one": "Deleting %1 of %n item…", "other": "Deleting %1 of %n items…" },
   "Emptying the trash: %1 of %n items…": { "one": "Emptying the trash: %1 of %n item…", "other": "Emptying the trash: %1 of %n items…" },
   "Compressing %1 of %n items into %2…": { "one": "Compressing %1 of %n item into %2…", "other": "Compressing %1 of %n items into %2…" },
+  "Undoing %1 of %n items…": { "one": "Undoing %1 of %n item…", "other": "Undoing %1 of %n items…" },
+  "Redoing %1 of %n items…": { "one": "Redoing %1 of %n item…", "other": "Redoing %1 of %n items…" },
   "Stopped after %1 of %n items.": { "one": "Stopped after %1 of %n item.", "other": "Stopped after %1 of %n items." },
+  "Undid moving %n items.": { "one": "Undid moving %n item.", "other": "Undid moving %n items." },
+  "Redid moving %n items.": { "one": "Redid moving %n item.", "other": "Redid moving %n items." },
+  "Undid copying %n items.": { "one": "Undid copying %n item.", "other": "Undid copying %n items." },
+  "Redid copying %n items.": { "one": "Redid copying %n item.", "other": "Redid copying %n items." },
+  "Undid moving %n items to the trash.": { "one": "Undid moving %n item to the trash.", "other": "Undid moving %n items to the trash." },
+  "Redid moving %n items to the trash.": { "one": "Redid moving %n item to the trash.", "other": "Redid moving %n items to the trash." },
   "Do this for the other %n clashes": { "one": "Do this for the other clash", "other": "Do this for the other %n clashes" }
 }

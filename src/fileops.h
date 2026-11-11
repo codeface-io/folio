@@ -18,15 +18,17 @@ class QProcess;
 // Long work (copying a folder of videos) runs off the UI thread, reports how
 // far it's got through `busy`, and can be cancelled. Nothing is ever
 // overwritten: a name that's taken is asked about first (`clash`), and what's
-// replaced goes to the trash.
+// replaced goes to the trash. What's done can be undone, and redone.
 class FileOps : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(bool canPaste READ canPaste NOTIFY clipboardChanged)
     Q_PROPERTY(QVariantMap clash READ clash NOTIFY clashChanged)
+    Q_PROPERTY(QString undoName READ undoName NOTIFY historyChanged)
 
 public:
     explicit FileOps(QObject *parent = nullptr);
+    ~FileOps() override;
 
     QString busy() const { return m_busy; }
     bool canPaste() const;
@@ -41,6 +43,22 @@ public:
         // A single folder counts what's in it as its items, set by the
         // worker once it has listed it.
         QString countIn;
+    };
+    // One change work made, which undo makes backwards and redo forwards
+    // again. A move: the item is at `path` and came from `other`. Into or
+    // out of the trash (`trash`): the item belongs at `path`, and is in the
+    // trash at `other`, which is empty while it's at `path`.
+    struct Step {
+        bool trash = false;
+        QString path, other;
+    };
+    // What undo names: the kind of change, and the item or how many.
+    enum Kind { Renaming, Moving, Copying, Duplicating, MakingFolder, Compressing, Trashing };
+    struct Change {
+        Kind kind;
+        QString name;
+        int count = 0;
+        QList<Step> steps;
     };
 
     // The clipboard holds files the way GNOME and KDE apps expect
@@ -120,6 +138,15 @@ public:
     // Cancels the whole operation the clash was asked for.
     Q_INVOKABLE void dropClash();
 
+    // Undo and redo the file changes made in this Folio, whichever window
+    // made them. `undoName` names the next undo ("Undo Rename"), or is
+    // empty when there's nothing to undo.
+    Q_INVOKABLE void undo();
+    Q_INVOKABLE void redo();
+    QString undoName() const;
+    // Forgets every change, for tests.
+    static void forgetHistory();
+
     // Building blocks, kept static for tests.
     static QMimeData *mimeDataFor(const QStringList &paths, bool cut);
     // The paths on the clipboard and whether they were cut.
@@ -168,9 +195,11 @@ public:
     // The paths whose names are taken in `folder`, which would clash.
     static QStringList clashes(const QStringList &paths, const QString &folder, Mode mode);
     // Copies or moves each path into `folder`, a clash as `choices` says
-    // (keeping both when it doesn't); returns the new names.
+    // (keeping both when it doesn't); returns the new names. With `steps`,
+    // adds each change made, for undo.
     static QStringList transfer(const QStringList &paths, const QString &folder, Mode mode, QString *error,
-                                const QHash<QString, Choice> &choices = {}, Job *job = nullptr);
+                                const QHash<QString, Choice> &choices = {}, Job *job = nullptr,
+                                QList<Step> *steps = nullptr);
 
 signals:
     void busyChanged();
@@ -178,6 +207,7 @@ signals:
     void failed(const QString &message);
     void notice(const QString &notice);
     void clashChanged();
+    void historyChanged();
     // Work finished in `folder`, which now holds `name` (to select it).
     void done(const QString &folder, const QString &name);
 
@@ -197,6 +227,11 @@ private:
     void transferInBackground(const QStringList &paths, const QString &folder, Mode mode, bool releaseClipboard);
     void startTransfer(const QStringList &paths, const QString &folder, Mode mode, bool releaseClipboard,
                        const QHash<QString, Choice> &choices = {}, bool duplicating = false);
+    // Remembers a change for undo, forgetting what was undone before it.
+    static void remember(const Change &change);
+    // Undoes or redoes the latest change, once it's checked that
+    // everything is still where the change left it.
+    void step(bool undoing);
     // Says the work was stopped, and how far it got.
     void sayStopped(const Job &job);
     // Runs a helper program (bsdtar, dropbox-cli, tailscale) while showing
