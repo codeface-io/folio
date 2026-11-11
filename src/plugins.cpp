@@ -740,8 +740,9 @@ Plugins::Result Plugins::interpret(const Manifest &plugin, const QString &label,
                                                      : tr("it stopped with code %1").arg(run.code);
         result.error = tr("%1: %2").arg(label, why);
     }
+    // A failure does nothing else it asks.
     if (!result.error.isEmpty())
-        result.notice.clear();
+        result = Result{result.error, {}, {}, {}};
     return result;
 }
 

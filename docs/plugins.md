@@ -355,7 +355,7 @@ next; printing nothing is fine.
 | `notice` | Shows it in the status bar for a moment. Text. |
 | `copy` | Puts it on the clipboard. Not translated. |
 | `path` | Goes to that folder, an absolute path or one starting with `~`. |
-| `error` | Shows it as a failure, even with a zero exit. Text. |
+| `error` | Shows it as a failure, even with a zero exit, and does none of the above. Text. |
 
 A command that exits with an error fails: Folio shows its `error` if it
 printed one, otherwise the last line of its standard error after the entry's

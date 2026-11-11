@@ -1934,12 +1934,13 @@ private slots:
         plugins.share("alpha", "link", {files.filePath("Dropbox/a.txt")}, {}, [&](const Plugins::Result &r) { result = r; });
         QTRY_VERIFY(result);
         QCOMPARE(result->error, "Link: no link for " + files.filePath("Dropbox/a.txt"));
-        // An error printed is a failure even with a zero exit.
+        // An error printed is a failure even with a zero exit, and a
+        // failure does nothing else it asks.
         result.reset();
         plugins.share("beta", "copy", {files.filePath("c.txt")}, {}, [&](const Plugins::Result &r) { result = r; });
         QTRY_VERIFY(result);
         QCOMPARE(result->error, QString("x is too big"));
-        QCOMPARE(result->copy, QString("https://example.com/x"));
+        QCOMPARE(result->copy, QString());
     }
 
     void pluginViewsListTheirItems()
