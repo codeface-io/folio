@@ -1,0 +1,14 @@
+#!/bin/sh
+# Lists the tailnet's machines that can hold files and can be reached right
+# now, by name: phones can't be browsed over SFTP, and offline machines would
+# only be dead ends (the next poll brings them back when they wake). Each
+# opens over SFTP as itself, and since Tailscale has already made sure who's
+# on the other end, Folio may accept its host key.
+tailscale status --json | jq -c '
+  {"linux": "Linux", "macOS": "macOS", "windows": "Windows"} as $systems
+  | [(.Peer // {})[]
+     | ((.DNSName // "") | rtrimstr(".")) as $host
+     | select(.Online == true and (.HostName // "") != "" and $host != "" and $systems[.OS] != null)
+     | {id: $host, name: .HostName, icon: "peer", subtitle: $systems[.OS],
+        details: [["Host", $host]], open: {mount: "sftp://\($host)/", verified: true}}]
+  | {items: sort_by(.name | ascii_downcase)}'

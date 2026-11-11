@@ -9,6 +9,7 @@ Files (`folio`) is Omarchy's file manager. It's one quiet window that follows yo
 - **The sidebar** holds everything in your home folder, pinned folders (shared with GTK file dialogs), Recents, Trash with restore, your drives, and the machines on your tailnet, which open over SFTP.
 - **Right-click** (or Alt+Enter) to open with another app, rename, duplicate, compress, share by Dropbox link, Taildrop or LocalSend, and delete. Copy and paste work with other apps, and nothing is ever overwritten.
 - **Split** the window in two with Ctrl+Alt+N to move things between folders.
+- **Plugins** add sidebar sections, Share entries and views; Tailscale, Dropbox and LocalSend are plugins too. [docs/plugins.md](docs/plugins.md) shows how to write one.
 
 | Columns | Preview |
 | --- | --- |

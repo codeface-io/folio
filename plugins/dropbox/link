@@ -1,0 +1,17 @@
+#!/bin/sh
+# Asks Dropbox for a share link to the file, for Folio to put on the
+# clipboard. dropbox-cli prints the link, or a sentence saying why not.
+
+# A JSON string: quotes and backslashes escaped, lines joined.
+quote() { printf '"%s"' "$(printf '%s' "$1" | tr '\n\r\t' '   ' | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
+
+name=$(basename "$1")
+said=$(dropbox-cli sharelink "$1" 2>&1)
+link=$(printf '%s\n' "$said" | tail -n 1)
+case "$link" in
+  https://*)
+    printf '{"copy": %s, "notice": ["Dropbox link for %%1 copied.", %s]}\n' "$(quote "$link")" "$(quote "$name")" ;;
+  *)
+    printf '{"error": ["Couldn'\''t get a Dropbox link for %%1: %%2", %s, %s]}\n' "$(quote "$name")" "$(quote "$said")"
+    exit 1 ;;
+esac

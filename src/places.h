@@ -1,13 +1,12 @@
 #pragma once
 
 #include <QObject>
-#include <QProcess>
 #include <QTimer>
 #include <QVariantList>
 
-// The sidebar: the user's places (with Dropbox first-class when it's set up),
-// the drives, and the tailnet machines opened in Folio. Each list is small,
-// so it is handed to QML as plain maps rather than a model.
+// The sidebar's own rows: the user's places, pinned folders, views and
+// drives (plugins add the rest). Each list is small, so it is handed to QML
+// as plain maps rather than a model.
 class Places : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString home READ home CONSTANT)
@@ -15,12 +14,6 @@ class Places : public QObject {
     Q_PROPERTY(QVariantList pinned READ pinned NOTIFY changed)
     Q_PROPERTY(QVariantList views READ views NOTIFY changed)
     Q_PROPERTY(QVariantList devices READ devices NOTIFY changed)
-    // Every online machine on the tailnet that can hold files.
-    Q_PROPERTY(QVariantList peers READ peers NOTIFY changed)
-    // The few of those opened in Folio, most recently opened first. A
-    // tailnet can have hundreds of machines; these are the ones that matter.
-    Q_PROPERTY(QVariantList machines READ machines NOTIFY changed)
-    Q_PROPERTY(QString dropboxStatus READ dropboxStatus NOTIFY changed)
 
 public:
     // `home` is overridable for tests; the real home also consults the XDG
@@ -32,9 +25,6 @@ public:
     QVariantList pinned() const { return m_pinned; }
     QVariantList views() const { return m_views; }
     QVariantList devices() const { return m_devices; }
-    QVariantList peers() const { return m_peers; }
-    QVariantList machines() const { return m_machines; }
-    QString dropboxStatus() const { return m_dropboxStatus; }
 
     Q_INVOKABLE void refresh();
 
@@ -44,18 +34,6 @@ public:
     Q_INVOKABLE QString pin(const QString &path);
     Q_INVOKABLE void unpin(const QString &path);
     Q_INVOKABLE bool isPinned(const QString &path) const;
-
-    // Opening a machine records its host, and when, in Folio's settings;
-    // forgetting it takes it off the sidebar again.
-    Q_INVOKABLE void remember(const QString &host);
-    Q_INVOKABLE void forget(const QString &host);
-    // The hosts recorded, most recently opened first.
-    QStringList opened() const;
-    // The peers among `opened`, in its order, at most `limit` of them.
-    static QVariantList onlineOf(const QStringList &opened, const QVariantList &peers, int limit = 6);
-
-    static QVariantList parseTailscale(const QByteArray &json);
-    static QString parseDropboxStatus(const QByteArray &output);
 
     struct Mount {
         QString root;
@@ -77,24 +55,10 @@ private:
     QString bookmarksPath() const;
     QStringList readBookmarkLines() const;
     bool writeBookmarkLines(const QStringList &lines);
-    // A machine opened, and when, as ISO 8601 text, which keeps the
-    // settings file readable.
-    struct Opened {
-        QString host;
-        QString when;
-    };
-    QString settingsPath() const;
-    QList<Opened> readOpened() const;
-    void writeOpened(const QList<Opened> &opened);
-    void refreshMachines();
-    void pollTailscale();
-    void pollDropbox();
     QString userDirectory(int location, const QString &fallback) const;
 
     QString m_home;
     bool m_realHome;
-    QVariantList m_places, m_pinned, m_views, m_devices, m_peers, m_machines;
-    QString m_dropboxStatus;
-    QProcess m_tailscale, m_dropbox;
+    QVariantList m_places, m_pinned, m_views, m_devices;
     QTimer m_poll;
 };

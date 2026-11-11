@@ -1,0 +1,7 @@
+#!/bin/sh
+# Sends the selected files to the chosen machine with Taildrop; tailscale's
+# own words say why when it can't.
+if ! why=$(tailscale file cp "$@" "$FOLIO_TARGET:" 2>&1 >/dev/null); then
+  jq -cn --arg name "$FOLIO_TARGET_NAME" --arg why "$why" '{error: ["Couldn'\''t send to %1: %2", $name, $why]}'
+  exit 1
+fi

@@ -151,16 +151,6 @@ void FolderModel::setQuery(const QString &query) {
     reload();
 }
 
-void FolderModel::setPeers(const QVariantList &peers) {
-    if (peers == m_peers)
-        return;
-    m_peers = peers;
-    emit peersChanged();
-    // The tailnet view follows machines coming online and going away.
-    if (m_path == tailnetPath())
-        reload();
-}
-
 void FolderModel::setItems(const QVariantList &items) {
     if (items == m_items)
         return;
@@ -190,7 +180,7 @@ void FolderModel::setPath(const QString &path) {
 
     // The old folder stays up while the new one is read, which locally takes
     // a few milliseconds: swapping straight from one to the other avoids an
-    // empty frame between them. A slow listing (a tailnet machine) clears it
+    // empty frame between them. A slow listing (another machine's) clears it
     // after a moment, so the old folder never lingers under the new path.
     // An empty path is a column with nothing to show yet.
     if (m_path.isEmpty()) {
@@ -209,8 +199,8 @@ void FolderModel::setPath(const QString &path) {
     } else {
         m_staleClear.start();
     }
-    // The tailnet and plugins' views have nothing to watch: they're polled.
-    if (m_path != tailnetPath() && !isPluginView(m_path))
+    // Plugins' views have nothing to watch: their plugins are polled.
+    if (!isPluginView(m_path))
         m_watcher.addPath(m_path == recentPath() ? recentFile() : m_path);
     reload();
 }
@@ -314,7 +304,7 @@ QVector<FolderModel::Entry> FolderModel::search(const QString &root, const QStri
                 e.name = base.relativeFilePath(e.path);
                 entries.push_back(e);
             }
-            // Other filesystems (a mounted drive, a tailnet machine, /proc
+            // Other filesystems (a mounted drive, another machine, /proc
             // from /) and symlinked folders aren't walked into.
             struct stat st;
             if (info.isDir() && !info.isSymLink()
@@ -401,26 +391,6 @@ QVector<FolderModel::Entry> FolderModel::listRecent(const QString &xbel, bool sh
     return entries;
 }
 
-QVector<FolderModel::Entry> FolderModel::listPeers(const QVariantList &peers, const QString &query) {
-    QVector<Entry> entries;
-    for (const QVariant &peer : peers) {
-        const QVariantMap map = peer.toMap();
-        Entry e;
-        e.name = map.value("name").toString();
-        if (!e.name.contains(query, Qt::CaseInsensitive))
-            continue;
-        e.path = tailnetPath() + map.value("host").toString();
-        e.kind = QStringLiteral("item");
-        e.icon = QStringLiteral("peer");
-        e.extension = map.value("os").toString();
-        e.details = {QVariant(QVariantList{QObject::tr("Host"), map.value("host").toString()})};
-        entries.push_back(e);
-    }
-    // By name in every order: machines have no size, kind or date to sort by.
-    sortEntries(entries, "name");
-    return entries;
-}
-
 QVector<FolderModel::Entry> FolderModel::listItems(const QVariantList &items, const QString &query) {
     QVector<Entry> entries;
     for (const QVariant &item : items) {
@@ -475,7 +445,6 @@ void FolderModel::reload() {
     const bool showHidden = m_showHidden;
     const QString sort = m_sort;
     const QString query = m_query;
-    const QVariantList peers = m_peers;
     const QVariantList items = m_items;
     *m_latest = generation;
     const auto latest = m_latest;
@@ -508,11 +477,10 @@ void FolderModel::reload() {
             remember();
         countFolders(generation);
     });
-    watcher->setFuture(QtConcurrent::run([path, showHidden, sort, query, peers, items, latest, generation] {
+    watcher->setFuture(QtConcurrent::run([path, showHidden, sort, query, items, latest, generation] {
         QString error;
         const auto overtaken = [&] { return *latest != generation; };
-        auto entries = path == tailnetPath() ? listPeers(peers, query)
-                     : isPluginView(path) ? listItems(items, query)
+        auto entries = isPluginView(path) ? listItems(items, query)
                      : query.isEmpty() || path == recentPath() ? list(path, showHidden, sort, &error, overtaken)
                      : search(path, query, showHidden, sort, overtaken);
         return qMakePair(entries, error);

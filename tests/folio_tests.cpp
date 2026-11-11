@@ -61,8 +61,8 @@ static std::unique_ptr<QTemporaryDir> elsewhere()
     return dir;
 }
 
-// `tailscale status --json`, trimmed to what Folio reads, for a made-up
-// tailnet: three desktops online, one offline, and a phone.
+// `tailscale status --json`, trimmed to what the Tailscale plugin reads, for
+// a made-up tailnet: three desktops online, one offline, and a phone.
 static QByteArray tailnet()
 {
     return R"({"Peer":{
@@ -100,6 +100,60 @@ static QStringList namesOf(const QVariantList &list)
     for (const QVariant &v : list)
         names << v.toMap().value("name").toString();
     return names;
+}
+
+// A folder of programs for PATH: these scripts, beside the few real tools the
+// bundled plugins use, so a test never runs the real tailscale or Dropbox.
+static QString binWith(const QString &folder, const QHash<QString, QByteArray> &scripts)
+{
+    QDir().mkpath(folder);
+    for (const char *tool : {"jq", "tr", "sed", "tail", "basename", "cat"})
+        QFile::link(QStandardPaths::findExecutable(tool), folder + "/" + tool);
+    for (auto it = scripts.begin(); it != scripts.end(); ++it) {
+        QFile file(folder + "/" + it.key());
+        if (file.open(QIODevice::WriteOnly))
+            file.write(it.value());
+        file.close();
+        file.setPermissions(file.permissions() | QFileDevice::ExeOwner);
+    }
+    return folder;
+}
+
+// Puts PATH at `path` for as long as the returned guard does.
+[[nodiscard]] static auto pathAt(const QString &path)
+{
+    const QByteArray old = qgetenv("PATH");
+    qputenv("PATH", QFile::encodeName(path));
+    return qScopeGuard([old] { qputenv("PATH", old); });
+}
+
+// The plugins that come with Folio, as their checkout has them.
+static QString bundled()
+{
+    return QStringLiteral(FOLIO_PLUGINS);
+}
+
+// One of them, read with PATH as it is.
+static Plugins::Manifest bundledPlugin(const QString &id)
+{
+    for (const auto &m : Plugins::read({bundled()}, "en"))
+        if (m.id == id)
+            return m;
+    return {};
+}
+
+// Runs a bundled plugin's command with PATH at `bin` and HOME at `home`.
+static Plugins::Run runBundled(const Plugins::Manifest &plugin, const QStringList &command, const QString &bin,
+                               const QString &home, const QHash<QString, QString> &more = {})
+{
+    QProcessEnvironment env;
+    env.insert("PATH", bin);
+    env.insert("HOME", home);
+    env.insert("FOLIO_PLUGIN_DIR", plugin.dir);
+    env.insert("FOLIO_LANGUAGE", "en");
+    for (auto it = more.begin(); it != more.end(); ++it)
+        env.insert(it.key(), it.value());
+    return Plugins::execute(plugin, command, env, 5000);
 }
 
 class FolioTests : public QObject {
@@ -1392,13 +1446,13 @@ private slots:
         QCOMPARE(names(Places(home.path())),
                  QStringList({"Documents", "Omarchy", "project9", "project10", "Work"}));
 
-        // Dropbox shows once its folder exists, with its own mark.
+        // The XDG folders have glyphs of their own; Dropbox's mark comes
+        // from its plugin.
         QDir(home.path()).mkpath("Dropbox");
         const Places withDropbox(home.path());
         QCOMPARE(names(withDropbox).at(1), QString("Dropbox"));
-        QCOMPARE(withDropbox.places().at(1).toMap().value("icon").toString(), QString("dropbox"));
+        QCOMPARE(withDropbox.places().at(1).toMap().value("icon").toString(), QString("folder"));
         QCOMPARE(withDropbox.places().at(0).toMap().value("icon").toString(), QString("documents"));
-        QCOMPARE(withDropbox.places().at(5).toMap().value("icon").toString(), QString("folder"));
     }
 
     void placesPinFoldersAsGtkBookmarks()
@@ -1440,158 +1494,26 @@ private slots:
         QCOMPARE(places.pinned().size(), 1);
     }
 
-    void placesParseTailscalePeers()
-    {
-        const QByteArray json = R"({"Peer":{
-            "a":{"HostName":"nas","DNSName":"nas.example.ts.net.","OS":"linux","Online":false},
-            "b":{"HostName":"studio","DNSName":"studio.example.ts.net.","OS":"linux","Online":true},
-            "c":{"HostName":"phone","DNSName":"phone.example.ts.net.","OS":"iOS","Online":true}}})";
-        const auto peers = Places::parseTailscale(json);
-        // Offline machines and phones are left out.
-        QCOMPARE(peers.size(), 1);
-        QCOMPARE(peers.at(0).toMap().value("name").toString(), QString("studio"));
-        QCOMPARE(peers.at(0).toMap().value("host").toString(), QString("studio.example.ts.net"));
-        QCOMPARE(peers.at(0).toMap().value("os").toString(), QString("Linux"));
-    }
-
-    void placesRememberOpenedMachines()
-    {
-        QTemporaryDir home;
-        Places places(home.path());
-        places.remember("studio.example.ts.net");
-        places.remember("nas.example.ts.net");
-        // Most recently opened first; opening one again moves it up.
-        QCOMPARE(places.opened(), QStringList({"nas.example.ts.net", "studio.example.ts.net"}));
-        places.remember("studio.example.ts.net");
-        QCOMPARE(places.opened(), QStringList({"studio.example.ts.net", "nas.example.ts.net"}));
-        // Kept in Folio's settings, with when.
-        QSettings settings(home.filePath(".config/folio/folio.conf"), QSettings::IniFormat);
-        QCOMPARE(settings.beginReadArray("opened-machines"), 2);
-        settings.setArrayIndex(0);
-        QVERIFY(QDateTime::fromString(settings.value("when").toString(), Qt::ISODate).isValid());
-        settings.endArray();
-        QCOMPARE(Places(home.path()).opened().size(), 2);
-
-        places.forget("studio.example.ts.net");
-        QCOMPARE(places.opened(), QStringList({"nas.example.ts.net"}));
-
-        // Only the last 20 are kept.
-        for (int i = 0; i < 25; ++i)
-            places.remember(QString("machine%1.example.ts.net").arg(i));
-        QCOMPARE(places.opened().size(), 20);
-        QCOMPARE(places.opened().first(), QString("machine24.example.ts.net"));
-        QCOMPARE(places.opened().last(), QString("machine5.example.ts.net"));
-    }
-
-    void placesShowOnlyOnlineOpenedMachines()
-    {
-        const QVariantList peers = Places::parseTailscale(tailnet());
-        // The offline nas and the phone aren't shown, however recently opened.
-        const QStringList opened{"nas.example.ts.net", "studio.example.ts.net", "phone.example.ts.net",
-                                 "build.example.ts.net"};
-        const auto shown = Places::onlineOf(opened, peers);
-        QCOMPARE(shown.size(), 2);
-        QCOMPARE(shown.at(0).toMap().value("name").toString(), QString("studio"));
-        QCOMPARE(shown.at(1).toMap().value("name").toString(), QString("build"));
-        QCOMPARE(Places::onlineOf(opened, peers, 1).size(), 1);
-
-        // The sidebar shows a handful at most.
-        QVariantList many;
-        QStringList hosts;
-        for (int i = 0; i < 10; ++i) {
-            const QString host = QString("machine%1.example.ts.net").arg(i);
-            many << QVariantMap{{"name", QString("machine%1").arg(i)}, {"host", host}, {"os", "Linux"}};
-            hosts << host;
-        }
-        QCOMPARE(Places::onlineOf(hosts, many).size(), 6);
-    }
-
-    void tailnetViewListsOnlineDesktopsByName()
-    {
-        const auto entries = FolderModel::listPeers(Places::parseTailscale(tailnet()));
-        QStringList names;
-        for (const auto &e : entries) names << e.name;
-        // Offline machines and phones are left out; the rest go by name,
-        // whatever their case.
-        QCOMPARE(names, QStringList({"build", "Conference-Room", "studio"}));
-        const auto &build = entries.at(0);
-        QCOMPARE(build.kind, QString("item"));
-        QCOMPARE(build.icon, QString("peer"));
-        QCOMPARE(build.path, FolderModel::tailnetPath() + "build.example.ts.net");
-        QCOMPARE(build.extension, QString("Windows"));
-        QVERIFY(!build.isDir);
-    }
-
-    void tailnetViewIsAPlaceOfItsOwn()
-    {
-        QTemporaryDir home;
-        Backend backend(home.path());
-        backend.navigate(FolderModel::tailnetPath());
-        QCOMPARE(backend.path(), FolderModel::tailnetPath());
-        QCOMPARE(backend.title(), QString("Tailnet"));
-        QCOMPARE(backend.crumbs().size(), 1);
-        QCOMPARE(backend.crumbs().at(0).toMap().value("name").toString(), QString("Tailnet"));
-        backend.goUp();
-        QCOMPARE(backend.path(), FolderModel::tailnetPath());
-    }
-
     void typedViewsGoToTheirView()
     {
         // The path bar shows a view as its own name, so Return on it, or
         // the name typed, goes there rather than to a folder it isn't.
         QTemporaryDir home;
         Backend backend(home.path());
-        backend.navigate(FolderModel::tailnetPath());
+        backend.navigate(FolderModel::recentPath());
         QVERIFY(backend.goTyped(backend.typedPath()));
-        QCOMPARE(backend.path(), FolderModel::tailnetPath());
+        QCOMPARE(backend.path(), FolderModel::recentPath());
         QVERIFY(backend.message().isEmpty());
+        backend.navigate(home.path());
         QVERIFY(backend.goTyped(" recent: "));
         QCOMPARE(backend.path(), FolderModel::recentPath());
     }
 
-    void tailnetViewSearchesMachineNames()
+    void mountsGoByTheirServersName()
     {
-        const QVariantList peers = Places::parseTailscale(tailnet());
-        QCOMPARE(FolderModel::listPeers(peers, "STU").size(), 1);
-
-        FolderModel model;
-        QSignalSpy loaded(&model, &FolderModel::loaded);
-        model.setPeers(peers);
-        model.setPath(FolderModel::tailnetPath());
-        QVERIFY(loaded.wait(3000));
-        QCOMPARE(model.count(), 3);
-        model.setQuery("o");
-        QVERIFY(loaded.wait(3000));
-        QCOMPARE(model.count(), 2);
-        QCOMPARE(model.get(0).value("name").toString(), QString("Conference-Room"));
-        QCOMPARE(model.get(1).value("name").toString(), QString("studio"));
-        // A machine going away leaves the view at the next poll.
-        QVariantList without = peers;
-        without.removeIf([](const QVariant &p) { return p.toMap().value("name") == "studio"; });
-        model.setPeers(without);
-        QVERIFY(loaded.wait(3000));
-        QCOMPARE(model.count(), 1);
-        // A machine renamed keeps its host, and so its path; the view still
-        // shows the new name.
-        QVariantList renamed = without;
-        QVariantMap peer = renamed[0].toMap();
-        const QString host = peer.value("host").toString();
-        peer["name"] = "Boardroom";
-        renamed[0] = peer;
-        model.setQuery("");
-        QVERIFY(loaded.wait(3000));
-        model.setPeers(renamed);
-        QVERIFY(loaded.wait(3000));
-        bool found = false;
-        for (int i = 0; i < model.count(); ++i)
-            found |= model.get(i).value("name").toString() == "Boardroom";
-        QVERIFY2(found, qPrintable(host));
-    }
-
-    void tailnetMountsGoByTheMachinesName()
-    {
-        QCOMPARE(Backend::mountLabel("sftp:host=studio.example.ts.net"), QString("studio"));
-        QCOMPARE(Backend::mountLabel("sftp:host=studio.example.ts.net,user=me"), QString("studio"));
+        // A plugin's item gives its mount its own name (see
+        // pluginsFillTheirSectionMarksAndView); others go by their server.
+        QCOMPARE(Backend::mountLabel("sftp:host=studio.example.ts.net,user=me"), QString("studio.example.ts.net"));
         QCOMPARE(Backend::mountLabel("sftp:host=files.example.com"), QString("files.example.com"));
         QCOMPARE(Backend::mountLabel("smb-share:server=nas,share=media"), QString("nas"));
     }
@@ -2011,6 +1933,154 @@ private slots:
         QCOMPARE(backend.path(), QDir::cleanPath(home.path()));
     }
 
+    void tailscalePluginListsOnlineDesktopsByName()
+    {
+        QTemporaryDir dir;
+        const QString bin = binWith(dir.filePath("bin"), {{"tailscale", "#!/bin/sh\ncat <<'EOF'\n" + tailnet() + "\nEOF\n"}});
+        const auto path = pathAt(bin);
+        const auto plugin = bundledPlugin("tailscale");
+        QCOMPARE(plugin.id, QString("tailscale"));
+        const Plugins::Run run = runBundled(plugin, plugin.poll, bin, dir.path());
+        QVERIFY2(run.ok(), qPrintable(run.lastError));
+        const auto output = Plugins::parseOutput(run.out);
+        QVERIFY(output);
+        // Offline machines and phones are left out; the rest go by name,
+        // whatever their case.
+        QStringList names;
+        for (const auto &item : output->items)
+            names << item.name;
+        QCOMPARE(names, QStringList({"build", "Conference-Room", "studio"}));
+        const auto &build = output->items.at(0);
+        QCOMPARE(build.id, QString("build.example.ts.net"));
+        QCOMPARE(build.icon, QString("peer"));
+        QCOMPARE(build.subtitle.toString(), QString("Windows"));
+        QCOMPARE(build.details, QJsonArray({QJsonArray{"Host", "build.example.ts.net"}}));
+        // Opened over SFTP as itself, its host key accepted: Tailscale has
+        // already made sure who's on the other end.
+        QCOMPARE(build.open.value("mount").toString(), QString("sftp://build.example.ts.net/"));
+        QVERIFY(build.open.value("verified").toBool());
+
+        // Without tailscale (or jq), the plugin is off.
+        const auto none = pathAt(dir.filePath("nothing"));
+        QVERIFY(bundledPlugin("tailscale").id.isEmpty());
+    }
+
+    void tailscalePluginSendsWithTaildrop()
+    {
+        QTemporaryDir dir;
+        const QString bin = binWith(dir.filePath("bin"), {{"tailscale",
+            "#!/bin/sh\nprintf '%s|' \"$@\" > \"$HOME/sent\"\n"
+            "case \"$*\" in *offline*) echo 'no such peer: offline' >&2; exit 1 ;; esac\n"}});
+        const auto path = pathAt(bin);
+        const auto plugin = bundledPlugin("tailscale");
+        QCOMPARE(plugin.share.size(), 1);
+        QVERIFY(plugin.share[0].toItems && plugin.share[0].files);
+        const Plugins::Run sent = runBundled(plugin, plugin.share[0].command + QStringList{"/a b.txt", "/c.txt"}, bin, dir.path(),
+                                             {{"FOLIO_TARGET", "studio.example.ts.net"}, {"FOLIO_TARGET_NAME", "studio"}});
+        QVERIFY(sent.ok());
+        QFile file(dir.filePath("sent"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), QByteArray("file|cp|/a b.txt|/c.txt|studio.example.ts.net:|"));
+
+        // Its failure says which machine, in words Folio can translate.
+        const Plugins::Run failed = runBundled(plugin, plugin.share[0].command + QStringList{"/c.txt"}, bin, dir.path(),
+                                               {{"FOLIO_TARGET", "offline.example.ts.net"}, {"FOLIO_TARGET_NAME", "offline"}});
+        QVERIFY(!failed.ok());
+        const QJsonValue error = QJsonDocument::fromJson(failed.out).object().value("error");
+        QCOMPARE(Plugins::text(plugin, error), QString("Couldn't send to offline: no such peer: offline"));
+    }
+
+    void dropboxPluginMarksItsFolder()
+    {
+        QTemporaryDir home, dir;
+        const auto plugin = bundledPlugin("dropbox");
+        QCOMPARE(plugin.id, QString("dropbox"));
+        auto run = [&](const QString &says, bool installed) {
+            const QString bin = dir.filePath(installed ? "bin-" + QString::number(qHash(says)) : "bin-none");
+            binWith(bin, installed ? QHash<QString, QByteArray>{{"dropbox-cli", "#!/bin/sh\necho '" + says.toUtf8() + "'\n"}}
+                                   : QHash<QString, QByteArray>{});
+            const Plugins::Run r = runBundled(plugin, plugin.poll, bin, home.path());
+            return r.ok() ? Plugins::parseOutput(r.out) : std::nullopt;
+        };
+        // Nothing to say without a Dropbox folder.
+        auto output = run("Up to date", true);
+        QVERIFY(output && output->places.isEmpty());
+
+        QDir(home.path()).mkpath("Dropbox");
+        // The mark, even without dropbox-cli, but no links.
+        output = run({}, false);
+        QCOMPARE(output->places.size(), 1);
+        QCOMPARE(output->places[0].path, QString("~/Dropbox"));
+        QCOMPARE(output->places[0].icon, QString("dropbox.svg"));
+        QVERIFY(output->places[0].status.isUndefined());
+        QCOMPARE(output->share, std::optional<QStringList>(QStringList{}));
+        // Up to date says nothing; links work while Dropbox runs.
+        output = run("Up to date", true);
+        QVERIFY(output->places[0].status.isUndefined());
+        QCOMPARE(output->share, std::optional<QStringList>(QStringList{"link"}));
+        output = run("Syncing 3 files", true);
+        QCOMPARE(output->places[0].status.toString(), QString("syncing"));
+        QCOMPARE(output->places[0].tone, QString("warning"));
+        QCOMPARE(output->share, std::optional<QStringList>(QStringList{"link"}));
+        output = run("Dropbox isn't running!", true);
+        QCOMPARE(output->places[0].status.toString(), QString("stopped"));
+        QCOMPARE(output->places[0].tone, QString("error"));
+        QCOMPARE(output->share, std::optional<QStringList>(QStringList{}));
+    }
+
+    void dropboxPluginCopiesLinks()
+    {
+        QTemporaryDir dir;
+        const QString bin = binWith(dir.filePath("bin"), {{"dropbox-cli",
+            "#!/bin/sh\ncase \"$2\" in *nope*) echo \"Couldn't get link: not in Dropbox\"; exit 1 ;; esac\n"
+            "echo 'https://www.dropbox.com/s/x/'\"$(basename \"$2\")\"\n"}});
+        const auto plugin = bundledPlugin("dropbox");
+        QCOMPARE(plugin.share.size(), 1);
+        QVERIFY(plugin.share[0].single);
+        QCOMPARE(plugin.share[0].under, QStringList({"~/Dropbox/"}));
+        const Plugins::Run linked = runBundled(plugin, plugin.share[0].command + QStringList{"/home/me/Dropbox/a \"b\".pdf"}, bin, dir.path());
+        QVERIFY(linked.ok());
+        const QJsonObject said = QJsonDocument::fromJson(linked.out).object();
+        QCOMPARE(said.value("copy").toString(), QString("https://www.dropbox.com/s/x/a \"b\".pdf"));
+        QCOMPARE(Plugins::text(plugin, said.value("notice")), QString("Dropbox link for a \"b\".pdf copied."));
+
+        const Plugins::Run failed = runBundled(plugin, plugin.share[0].command + QStringList{"/home/me/Dropbox/nope.pdf"}, bin, dir.path());
+        QVERIFY(!failed.ok());
+        QCOMPARE(Plugins::text(plugin, QJsonDocument::fromJson(failed.out).object().value("error")),
+                 QString("Couldn't get a Dropbox link for nope.pdf: Couldn't get link: not in Dropbox"));
+    }
+
+    void localSendPluginNeedsLocalSend()
+    {
+        QTemporaryDir dir;
+        {
+            const auto path = pathAt(dir.filePath("nothing"));
+            QVERIFY(bundledPlugin("localsend").id.isEmpty());
+        }
+        const QString bin = binWith(dir.filePath("bin"), {{"localsend", "#!/bin/sh\n"}});
+        const auto path = pathAt(bin);
+        const auto plugin = bundledPlugin("localsend");
+        QCOMPARE(plugin.share.size(), 1);
+        QCOMPARE(plugin.share[0].label, QString("LocalSend…"));
+        QCOMPARE(plugin.share[0].command, QStringList({"localsend", "--headless", "send"}));
+        QVERIFY(plugin.share[0].detach);
+    }
+
+    void bundledPluginsTranslateTheirText()
+    {
+        // Every text the bundled plugins show is English source text, to be
+        // looked up in their catalogs like any other plugin's.
+        QTemporaryDir copy;
+        QVERIFY(QProcess::execute("cp", {"-r", bundled() + "/tailscale", copy.path()}) == 0);
+        QDir(copy.filePath("tailscale")).mkpath("i18n");
+        write(copy.filePath("tailscale/i18n/da.json"), R"({"Machines": "Maskiner", "Sending to %1…": "Sender til %1…"})");
+        const QString bin = binWith(copy.filePath("bin"), {{"tailscale", "#!/bin/sh\n"}});
+        const auto path = pathAt(bin);
+        const auto plugin = Plugins::read({copy.path()}, "da").value(0);
+        QCOMPARE(Plugins::text(plugin, QJsonValue(plugin.viewLabel)), QString("Maskiner"));
+        QCOMPARE(Plugins::text(plugin, QJsonArray{plugin.share[0].busy, "studio"}), QString("Sender til studio…"));
+    }
+
     void placesListOnlyPhysicalDrives()
     {
         const QList<Places::Mount> mounts{
@@ -2030,13 +2100,6 @@ private slots:
         QCOMPARE(drives.at(0).toMap().value("name").toString(), QString("archive"));
         QCOMPARE(drives.at(1).toMap().value("name").toString(), QString("Photos"));
         QCOMPARE(drives.at(1).toMap().value("path").toString(), QString("/run/media/me/Photos"));
-    }
-
-    void placesParseDropboxStatus()
-    {
-        QCOMPARE(Places::parseDropboxStatus("Up to date\n"), QString("synced"));
-        QCOMPARE(Places::parseDropboxStatus("Syncing 3 files\n"), QString("syncing"));
-        QCOMPARE(Places::parseDropboxStatus("Dropbox isn't running!\n"), QString("stopped"));
     }
 
     void thumbnailsFollowTheFreedesktopCache()

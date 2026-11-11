@@ -414,48 +414,6 @@ void FileOps::compress(const QStringList &selected) {
             });
 }
 
-void FileOps::shareLocalSend(const QStringList &paths) {
-    // The same command Omarchy's Nautilus extension runs.
-    if (paths.isEmpty())
-        return;
-    if (!QProcess::startDetached("localsend", QStringList{"--headless", "send"} + paths))
-        emit failed(tr("Sharing nearby needs LocalSend, which isn't installed."));
-}
-
-bool FileOps::hasLocalSend() const {
-    return !QStandardPaths::findExecutable("localsend").isEmpty();
-}
-
-void FileOps::dropboxLink(const QString &path) {
-    const QString name = QFileInfo(path).fileName();
-    runTool("dropbox-cli", {"sharelink", path}, tr("Getting a Dropbox link for %1…").arg(name),
-            tr("Dropbox links need dropbox-cli, which isn't installed."),
-            [this, name](QProcess *process, int code) {
-                const QString out = QString::fromUtf8(process->readAllStandardOutput()).trimmed();
-                // dropbox-cli prints the link, or a sentence saying why not.
-                const QString link = out.section('\n', -1).trimmed();
-                if (code != 0 || !link.startsWith("https://")) {
-                    const QString why = out.isEmpty() ? QString::fromUtf8(process->readAllStandardError()).trimmed() : out;
-                    emit failed(tr("Couldn't get a Dropbox link for %1: %2").arg(name, why));
-                    return;
-                }
-                QGuiApplication::clipboard()->setText(link);
-                emit notice(tr("Dropbox link for %1 copied.").arg(name));
-            });
-}
-
-void FileOps::shareTaildrop(const QStringList &paths, const QString &host) {
-    if (paths.isEmpty())
-        return;
-    const QString machine = host.section('.', 0, 0);
-    runTool("tailscale", QStringList{"file", "cp"} + paths + QStringList{host + ":"}, tr("Sending to %1…").arg(machine),
-            tr("Sending with Taildrop needs tailscale, which isn't installed."),
-            [this, machine](QProcess *process, int code) {
-                if (code != 0)
-                    emit failed(tr("Couldn't send to %1: %2").arg(machine, QString::fromUtf8(process->readAllStandardError()).trimmed()));
-            });
-}
-
 void FileOps::trash(const QStringList &paths) {
     if (paths.isEmpty() || !idle())
         return;

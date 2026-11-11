@@ -23,6 +23,7 @@ optdepends=(
   'glycin: HEIC, JPEG XL and other image thumbnails'
   'gvfs: browsing tailnet machines over SFTP'
   'tailscale: listing tailnet machines'
+  'jq: the Tailscale plugin, which reads tailscale status with it'
   'dropbox-cli: Dropbox sync status and share links'
   'localsend: sharing with nearby devices'
   'xdg-terminal-exec: Open Terminal Here'
@@ -43,4 +44,13 @@ package() {
   install -Dm644 "$startdir/folio.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/folio.svg"
   install -Dm644 "$startdir/folio.desktop" "$pkgdir/usr/share/applications/folio.desktop"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 docs/plugins.md "$pkgdir/usr/share/doc/$pkgname/plugins.md"
+
+  # The bundled plugins (Tailscale, Dropbox, LocalSend), their commands
+  # still executable.
+  find plugins -type f | while read -r file; do
+    mode=644
+    [ -x "$file" ] && mode=755
+    install -Dm$mode "$file" "$pkgdir/usr/share/folio/$file"
+  done
 }

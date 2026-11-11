@@ -2,8 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// Home's folders, pinned folders, views, drives, tailnet machines and
-// plugins' sections. The one holding the current folder stays lit while you
+// Home's folders, pinned folders, views, drives and plugins' sections. The one holding the current folder stays lit while you
 // dig into it, so you always know which root you're under.
 Rectangle {
     id: sidebar
@@ -26,18 +25,14 @@ Rectangle {
     // included), so the pin box shows.
     property int dropHovers: 0
     readonly property bool dragging: drop.containsDrag || dropHovers > 0 || pinDrop.containsDrag
-    // The tailnet's last row opens the view of every machine on it.
-    readonly property var allMachines: places.peers.length > 0 ? [{ path: "tailnet:" }] : []
     // Each plugin section's rows, then the row for its view.
     function sectionRows(section) { return section.view ? section.rows.concat([section.view]) : section.rows }
     readonly property var pluginRows: plugins.sections.reduce((all, section) => all.concat(sectionRows(section)), [])
-    readonly property var rows: [].concat(places.places, places.pinned, places.views, places.devices, places.machines,
-                                          allMachines, pluginRows)
+    readonly property var rows: [].concat(places.places, places.pinned, places.views, places.devices, pluginRows)
     readonly property int pinnedAt: places.places.length
     readonly property int viewsAt: pinnedAt + places.pinned.length
     readonly property int devicesAt: viewsAt + places.views.length
-    readonly property int peersAt: devicesAt + places.devices.length
-    readonly property int pluginsAt: peersAt + places.machines.length + allMachines.length
+    readonly property int pluginsAt: devicesAt + places.devices.length
     // Where a plugin section's rows start in `rows`.
     function sectionAt(index) {
         let at = pluginsAt
@@ -52,12 +47,11 @@ Rectangle {
     }
 
     function focusSidebar() {
-        // Start on the row for where we are (a machine's for anywhere on
-        // it), or the top.
+        // Start on the row for where we are (a plugin's item for anywhere
+        // in what it opens), or the top.
         let at = 0
         for (let i = 0; i < rows.length; ++i)
-            if (rows[i].host !== undefined ? onMachine(rows[i].host)
-                : rows[i].root !== undefined ? inside(rows[i].root) : rows[i].path === activePath)
+            if (rows[i].root !== undefined ? inside(rows[i].root) : rows[i].path === activePath)
                 at = i
         cursor = at
         forceActiveFocus()
@@ -66,15 +60,12 @@ Rectangle {
         const row = rows[i]
         if (!row)
             return
-        if (row.host !== undefined)
-            sidebar.target.openPeer(row.host)
-        else if (row.root !== undefined)
+        if (row.root !== undefined)
             sidebar.target.open(row.path)
         else
             sidebar.target.navigate(row.path)
         finished()
     }
-    function onMachine(host) { return sidebar.target.path.indexOf("/sftp:host=" + host) >= 0 }
     function reveal(item) {
         const y = item.mapToItem(column, 0, 0).y
         if (y < flick.contentY)
@@ -94,7 +85,7 @@ Rectangle {
     readonly property string activePath: {
         let best = ""
         const here = sidebar.target.path
-        for (const list of [places.places, places.pinned, places.views, places.devices, allMachines,
+        for (const list of [places.places, places.pinned, places.views, places.devices,
                             plugins.sections.filter(section => section.view).map(section => section.view)]) {
             for (const p of list) {
                 if (p.path !== "/" && (here === p.path || here.startsWith(p.path + "/")) && p.path.length > best.length)
@@ -102,13 +93,6 @@ Rectangle {
             }
         }
         return best
-    }
-
-    function statusText(status) {
-        // Up to date is the normal state and says nothing; only syncing or
-        // a stopped Dropbox is worth a word.
-        return status === "syncing" ? qsTr("syncing")
-             : status === "stopped" ? qsTr("stopped") : ""
     }
 
     component SectionLabel: Text {
@@ -238,8 +222,6 @@ Rectangle {
                     text: modelData.name
                     glyph: modelData.icon
                     active: sidebar.activePath === modelData.path
-                    status: sidebar.statusText(modelData.status)
-                    statusColor: modelData.status === "stopped" ? theme.red : theme.yellow
                     onClicked: sidebar.target.navigate(modelData.path)
                 }
             }
@@ -339,53 +321,6 @@ Rectangle {
                     active: sidebar.activePath === modelData.path
                     onClicked: sidebar.target.navigate(modelData.path)
                 }
-            }
-
-            // The machines opened here lately, while they're online, then
-            // the way to every other one.
-            SectionLabel { text: qsTr("Tailnet"); visible: places.peers.length > 0 }
-            Repeater {
-                model: places.machines
-                PlaceRow {
-                    id: machineRow
-                    required property var modelData
-                    required property int index
-                    keyed: sidebar.activeFocus && sidebar.cursor === sidebar.peersAt + index
-                    onKeyedChanged: if (keyed) sidebar.reveal(this)
-                    text: modelData.name
-                    glyph: "peer"
-                    active: sidebar.onMachine(modelData.host)
-                    onClicked: sidebar.target.openPeer(modelData.host)
-                    rightPadding: forget.visible ? forget.implicitWidth + 6 : 14
-                    IconButton {
-                        id: forget
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        implicitWidth: 28
-                        implicitHeight: 28
-                        visible: machineRow.hovered || hovered
-                        glyph: "close"
-                        text: qsTr("Remove from the sidebar")
-                        onClicked: places.forget(machineRow.modelData.host)
-                    }
-                }
-            }
-            PlaceRow {
-                visible: sidebar.allMachines.length > 0
-                keyed: sidebar.activeFocus && sidebar.cursor === sidebar.peersAt + places.machines.length
-                onKeyedChanged: if (keyed) sidebar.reveal(this)
-                // Under Tailnet, "Machines" says all of them, and unlike
-                // "All machines" it fits the narrow sidebar beside the count.
-                text: qsTr("Machines")
-                glyph: "tailnet"
-                active: sidebar.activePath === "tailnet:"
-                // How many are online, quietly, in the language's digits.
-                status: {
-                    translator.language // Re-read when the language (and so its digits) changes.
-                    return places.peers.length.toLocaleString(Qt.locale(), "f", 0)
-                }
-                statusColor: theme.secondaryForeground
-                onClicked: sidebar.target.navigate("tailnet:")
             }
 
             // Plugins' sections: their items, or the ones opened lately,

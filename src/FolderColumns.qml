@@ -3,7 +3,7 @@ import QtQuick.Controls
 import Folio
 
 // Columns, as in the macOS Finder: the folders on the way here from the
-// root (~, a tailnet machine, or /), the current folder, and what's inside
+// root (~, another machine, or /), the current folder, and what's inside
 // the selected subfolder. → goes into the selected folder, ← back out;
 // clicking anywhere to the left jumps there.
 Item {

@@ -56,7 +56,6 @@ public:
     Q_INVOKABLE void goUp();
     Q_INVOKABLE void back();
     Q_INVOKABLE void forward();
-    Q_INVOKABLE void openPeer(const QString &host);
     // Runs a plugin's share entry on the paths, sent to `target` (an item's
     // id) for a submenu, showing its busy text meanwhile and what it says
     // when it's done.
@@ -107,8 +106,6 @@ signals:
     void newWindowRequested(const QString &path);
     void selectRequested(const QString &name);
     void activateRequested();
-    // A machine was asked for, for the sidebar to remember it by.
-    void peerOpened(const QString &host);
 
 private:
     static QString gvfsRoot();

@@ -50,14 +50,6 @@ public:
     Q_INVOKABLE void duplicate(const QString &path);
     // Packs the items into a .zip beside them (bsdtar, from libarchive).
     Q_INVOKABLE void compress(const QStringList &paths);
-    // Sends with LocalSend to a nearby device, or with Taildrop to a
-    // machine on the tailnet.
-    Q_INVOKABLE void shareLocalSend(const QStringList &paths);
-    Q_INVOKABLE bool hasLocalSend() const;
-    // Asks Dropbox for a share link to a file in the Dropbox folder and
-    // puts it on the clipboard.
-    Q_INVOKABLE void dropboxLink(const QString &path);
-    Q_INVOKABLE void shareTaildrop(const QStringList &paths, const QString &host);
 
     Q_INVOKABLE void trash(const QStringList &paths);
 
@@ -150,7 +142,7 @@ private:
     // moving or copying) meanwhile.
     void transferInBackground(const QStringList &paths, const QString &folder, Mode mode, bool releaseClipboard,
                               const QString &busy = {});
-    // Runs a helper program (bsdtar, dropbox-cli, tailscale) while showing
+    // Runs a helper program (bsdtar) while showing
     // `busy`, one piece of work at a time like the rest. `missing` says
     // what to install when it isn't there; `finished` gets its exit code,
     // or -1 if it crashed.

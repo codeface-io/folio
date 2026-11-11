@@ -402,7 +402,7 @@ Taildrop.
 ```json
 {
   "folio": 1,
-  "requires": ["tailscale"],
+  "requires": ["tailscale", "jq"],
   "poll": { "command": ["./machines"] },
   "section": { "title": "Tailnet", "rows": "opened" },
   "view": { "title": "Tailnet", "label": "Machines", "icon": "tailnet",
@@ -414,9 +414,9 @@ Taildrop.
 }
 ```
 
-`machines` reads `tailscale status --json` and prints each online Linux,
-macOS or Windows machine as the item shown under [Polling](#polling); `send`
-runs `tailscale file cp "$@" "$FOLIO_TARGET:"`.
+`machines` reads `tailscale status --json` with `jq` and prints each online
+Linux, macOS or Windows machine as the item shown under [Polling](#polling);
+`send` runs `tailscale file cp "$@" "$FOLIO_TARGET:"`.
 
 **dropbox** marks the Dropbox folder in Home with Dropbox's mark and its sync
 status, and gets share links.
@@ -434,9 +434,10 @@ status, and gets share links.
 ```
 
 It requires nothing, so the folder keeps its mark without `dropbox-cli`.
-`status` prints nothing without a `~/Dropbox` folder; otherwise the mark,
+`status` prints `{}` without a `~/Dropbox` folder; otherwise the mark,
 plus, when `dropbox-cli` is there, `syncing` (warning) or `stopped` (error)
-from `dropbox-cli status`, and `"share": ["link"]` while Dropbox runs. `link`
+from `dropbox-cli status`, and `"share": ["link"]` while Dropbox runs
+(`"share": []` otherwise, since leaving `share` out would offer the link). `link`
 runs `dropbox-cli sharelink` and prints `{"copy": link, "notice": ["Dropbox
 link for %1 copied.", name]}`.
 

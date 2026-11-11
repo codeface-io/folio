@@ -74,12 +74,10 @@ FocusScope {
     // Restore and Empty Trash. Nothing is renamed or made there: an item
     // without its note (or under another name) can't be restored.
     readonly property bool inTrash: fileOps.inTrash(backend.path)
-    // The tailnet view and plugins' views list items, not files: there's
-    // nothing to copy, move, rename, make, pin or preview there, only items
-    // to open.
-    readonly property bool inView: backend.path === "tailnet:" || backend.path.startsWith("plugin:")
+    // Plugins' views list items, not files: there's nothing to copy, move,
+    // rename, make, pin or preview there, only items to open.
+    readonly property bool inView: backend.path.startsWith("plugin:")
     readonly property bool fileKeys: keys && !inView
-    Binding { target: backend.folder; property: "peers"; value: places.peers }
     Binding { target: backend.folder; property: "items"; value: (plugins.views[backend.path] || {}).items || [] }
     function deleteSelected() {
         const paths = pane.selectedPaths()
@@ -181,7 +179,6 @@ FocusScope {
         target: backend
         function onSelectRequested(name) { if (view.item) view.item.select(backend.folder.indexOf(name), false) }
         function onActivateRequested() { if (pane.host) { pane.host.raise(); pane.host.requestActivate() } }
-        function onPeerOpened(host) { places.remember(host) }
     }
 
     Connections {

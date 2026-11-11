@@ -1,0 +1,9 @@
+{
+  "folio": 1,
+  "poll": { "command": ["./status"] },
+  "share": [
+    { "id": "link", "label": "Dropbox Link", "command": ["./link"],
+      "under": ["~/Dropbox/"], "single": true,
+      "busy": "Getting a Dropbox link for %1…" }
+  ]
+}

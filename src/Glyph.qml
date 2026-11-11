@@ -13,8 +13,6 @@ Item {
     property color color: theme.foreground
     property real size: 18
     property real stroke: 1.6
-    // Brand marks are solid shapes rather than line drawings.
-    readonly property bool filled: name === "dropbox"
     readonly property bool picture: name.endsWith(".svg")
 
     implicitWidth: size
@@ -59,13 +57,11 @@ Item {
         case "pictures": return box(3, 5, 18, 14, r) + "M3 16l5-5 4 4 3-3 6 6" + circle(16, 9, 1.5)
         case "music": return "M9 17V5l11-2v12" + circle(6.5, 17, 2.5) + circle(17.5, 15, 2.5)
         case "videos": return box(3, 5, 18, 14, r) + "M10 9v6l5-3z"
-        // Dropbox's own mark, five diamonds: filled, as the brand draws it.
-        case "dropbox": return "M7 2.5L12 5.7 7 8.9 2 5.7zM17 2.5L22 5.7 17 8.9 12 5.7zM7 8.9L12 12.1 7 15.3 2 12.1zM17 8.9L22 12.1 17 15.3 12 12.1zM12 13.3L17 16.5 12 19.7 7 16.5z"
         case "recent": return circle(12, 12, 9) + "M12 7v5l3 2"
         case "trash": return "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"
         case "drive": return box(3, 6, 18, 12, r) + "M7 14h2"
         case "peer": return box(4, 4, 16, 11, r) + "M9 20h6M12 15v5"
-        // Machines joined to one another: the whole tailnet.
+        // Machines joined to one another: a network of them.
         case "tailnet": return circle(12, 5, 2.5) + circle(5, 18, 2.5) + circle(19, 18, 2.5) + "M10.8 7.2L6.2 15.8M13.2 7.2l4.6 8.6M7.5 18h9"
         case "folder": return folderBox()
         case "back": return "M15 6l-6 6 6 6"
@@ -105,8 +101,8 @@ Item {
         preferredRendererType: Shape.CurveRenderer
 
         ShapePath {
-            strokeColor: glyph.filled ? "transparent" : glyph.color
-            fillColor: glyph.filled ? glyph.color : "transparent"
+            strokeColor: glyph.color
+            fillColor: "transparent"
             strokeWidth: glyph.stroke
             capStyle: theme.radius > 0 ? ShapePath.RoundCap : ShapePath.SquareCap
             joinStyle: theme.radius > 0 ? ShapePath.RoundJoin : ShapePath.MiterJoin

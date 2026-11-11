@@ -61,14 +61,13 @@ QString Backend::gvfsRoot() {
 }
 
 // What a gvfs mount is called on screen: the host or server from its
-// folder's name ("sftp:host=nas,user=me", "smb-share:server=nas,..."), and only the machine's own name for a tailnet
-// address, since every machine on it shares the "tailXXXX.ts.net" part.
+// folder's name ("sftp:host=nas,user=me", "smb-share:server=nas,...").
 QString Backend::mountLabel(const QString &mountFolder) {
     QString host = mountFolder;
     for (const QString &field : mountFolder.section(':', 1).split(','))
         if (field.startsWith("host=") || field.startsWith("server="))
             host = field.section('=', 1);
-    return host.endsWith(".ts.net") ? host.section('.', 0, 0) : host;
+    return host;
 }
 
 QString Backend::mountName(const QString &mount) const {
@@ -82,8 +81,6 @@ QString Backend::title() const {
         return tr("Recents");
     if (FolderModel::isPluginView(p))
         return m_plugins ? m_plugins->views().value(p).toMap().value("title").toString() : p;
-    if (p == FolderModel::tailnetPath())
-        return tr("Tailnet");
     if (p == trashPath())
         return tr("Trash");
     if (p == m_home)
@@ -97,12 +94,10 @@ QString Backend::title() const {
 
 QVariantList Backend::crumbs() const {
     // Breadcrumbs start at the nearest root that means something to a person:
-    // ~ for home, a tailnet machine's name for its mount, / otherwise.
+    // ~ for home, another machine's name for its mount, / otherwise.
     const QString p = path();
     if (p == FolderModel::recentPath())
         return {QVariantMap{{"name", tr("Recents")}, {"path", p}}};
-    if (p == FolderModel::tailnetPath())
-        return {QVariantMap{{"name", tr("Tailnet")}, {"path", p}}};
     if (FolderModel::isPluginView(p))
         return {QVariantMap{{"name", title()}, {"path", p}}};
     // The trash's files folder is an implementation detail; it's "Trash".
@@ -161,11 +156,6 @@ bool Backend::go(const QString &path, bool record) {
 }
 
 void Backend::open(const QString &path) {
-    // A machine in the tailnet view opens as itself, over SFTP.
-    if (path.startsWith(FolderModel::tailnetPath()) && path != FolderModel::tailnetPath()) {
-        openPeer(path.mid(FolderModel::tailnetPath().size()));
-        return;
-    }
     if (path.startsWith("plugin:") && !FolderModel::isView(path)) {
         openItem(path);
         return;
@@ -182,8 +172,8 @@ void Backend::open(const QString &path) {
 }
 
 void Backend::goUp() {
-    // Recents, the tailnet and the trash are places of their own: nothing
-    // above them.
+    // Recents, plugins' views and the trash are places of their own:
+    // nothing above them.
     if (FolderModel::isView(path()) || path() == trashPath())
         return;
     const QString parent = QFileInfo(path()).absolutePath();
@@ -215,19 +205,6 @@ void Backend::forward() {
     ++m_index;
     if (!go(m_history.at(m_index), false))
         --m_index;
-}
-
-void Backend::openPeer(const QString &host) {
-    if (m_mounter.busy())
-        return;
-    // Remembered as it's asked for, not once it's mounted: a machine that
-    // didn't open (asleep, or without Tailscale SSH yet) is still the one
-    // to try again, and the sidebar only shows it while it's online.
-    emit peerOpened(host);
-    // SFTP over the tailnet: with Tailscale SSH on the other machine there
-    // are no keys or passwords to manage, and GVfs makes the mount look like
-    // any other folder.
-    mount("sftp://" + host + "/", host, true);
 }
 
 void Backend::openItem(const QString &path) {

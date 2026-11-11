@@ -1,0 +1,21 @@
+#!/bin/sh
+# Marks the Dropbox folder with Dropbox's own mark, even without dropbox-cli.
+# With it, the folder also says when it's syncing or Dropbox has stopped (up
+# to date is the normal state and says nothing), and while Dropbox runs, its
+# files can be shared by link.
+if [ ! -d "$HOME/Dropbox" ]; then
+  echo '{}'
+  exit 0
+fi
+# Without a share list every entry would be on, so it's always there.
+status=
+share=', "share": []'
+if command -v dropbox-cli >/dev/null 2>&1; then
+  said=$(dropbox-cli status 2>/dev/null | tr 'A-Z' 'a-z')
+  case "$said" in
+    "" | *"isn't running"*) status=', "status": "stopped", "tone": "error"' ;;
+    "up to date"*) share=', "share": ["link"]' ;;
+    *) status=', "status": "syncing", "tone": "warning"'; share=', "share": ["link"]' ;;
+  esac
+fi
+printf '{"places": [{"path": "~/Dropbox", "icon": "dropbox.svg"%s}]%s}\n' "$status" "$share"
