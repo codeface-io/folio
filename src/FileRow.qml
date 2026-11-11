@@ -108,7 +108,7 @@ Item {
         }
         Text {
             Layout.fillWidth: true
-            Layout.minimumWidth: theme.scaled(120)
+            Layout.minimumWidth: 120
             text: row.name
             color: row.current ? theme.accent : theme.foreground
             elide: Text.ElideMiddle

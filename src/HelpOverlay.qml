@@ -84,10 +84,15 @@ Rectangle {
                     // columns in order. (QML's JavaScript has no Array.flat.)
                     Repeater {
                         model: [].concat(...overlay.shortcuts)
+                        // Descriptions take what the keys leave and wrap
+                        // there, rather than running past the card.
                         delegate: Text {
                             required property var modelData
                             required property int index
                             Layout.fillWidth: index % 2 === 1
+                            Layout.preferredWidth: index % 2 ? 1 : implicitWidth
+                            Layout.alignment: Qt.AlignTop
+                            wrapMode: index % 2 ? Text.Wrap : Text.NoWrap
                             text: modelData
                             color: index % 2 ? theme.foreground : theme.accent
                         }
