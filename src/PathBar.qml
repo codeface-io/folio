@@ -60,7 +60,7 @@ Rectangle {
     // Transparent: the window draws one bar across the whole top, so the
     // path bars of one or two panes read as part of it.
     color: "transparent"
-    implicitHeight: 60
+    implicitHeight: Math.max(60, theme.scaled(60))
 
     RowLayout {
         anchors.fill: parent

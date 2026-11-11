@@ -57,7 +57,7 @@ MenuItem {
         anchors.verticalCenter: parent.verticalCenter
         visible: !!entry.subMenu
         name: "forward"
-        size: 12
+        size: Math.max(12, theme.scaled(12))
         color: entry.enabled ? theme.foreground : theme.secondaryForeground
     }
     indicator: Glyph {
@@ -65,7 +65,7 @@ MenuItem {
         anchors.verticalCenter: parent.verticalCenter
         visible: entry.checked
         name: "check"
-        size: 14
+        size: Math.max(14, theme.scaled(14))
         color: theme.accent
     }
 }

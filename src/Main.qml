@@ -103,7 +103,7 @@ ApplicationWindow {
         LayoutMirroring.childrenInherit: true
 
         // The bar across the top; the panes' path bars draw over it.
-        readonly property int barHeight: 60
+        readonly property int barHeight: Math.max(60, theme.scaled(60))
         Rectangle {
             width: parent.width
             height: parent.barHeight

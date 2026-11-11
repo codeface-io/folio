@@ -9,8 +9,8 @@ AbstractButton {
     property string glyph
     property bool active: false
 
-    implicitWidth: 36
-    implicitHeight: 36
+    implicitWidth: Math.max(36, theme.scaled(36))
+    implicitHeight: Math.max(36, theme.scaled(36))
     focusPolicy: Qt.NoFocus
     hoverEnabled: true
 

@@ -1870,6 +1870,22 @@ private slots:
         QVERIFY(!FolderModel::toMap(FolderModel::Entry()).contains("peek"));
     }
 
+    void themeScalesFromTheTextSize()
+    {
+        QCOMPARE(Theme::defaultFontSize, 13);
+        QCOMPARE(Theme::fontSizeFrom(QVariant()), 13);
+        QCOMPARE(Theme::fontSizeFrom(20), 20);
+        QCOMPARE(Theme::fontSizeFrom(8), 8);
+        QCOMPARE(Theme::fontSizeFrom(32), 32);
+        QCOMPARE(Theme::fontSizeFrom(7), 13);
+        QCOMPARE(Theme::fontSizeFrom(33), 13);
+        QCOMPARE(Theme::fontSizeFrom(-1), 13);
+        QTemporaryDir dir;
+        Theme theme(dir.path());
+        QCOMPARE(theme.scaled(13), theme.fontSize());
+        QCOMPARE(theme.scaled(0), 0);
+    }
+
     void themeFallsBack()
     {
         QTemporaryDir dir;

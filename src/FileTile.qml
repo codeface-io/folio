@@ -42,7 +42,8 @@ Item {
                                      : theme.secondaryForeground
 
     // The art is drawn at 128×92 and scaled, so a zoom keeps its shapes;
-    // the box around it takes the scaled size for the layout.
+    // the box around it takes the zoomed size for the layout. Ctrl+= sizes
+    // the picture; the name under it is a caption and follows the text size.
     Item {
         id: artBox
         width: 128 * tile.zoom

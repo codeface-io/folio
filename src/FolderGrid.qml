@@ -53,8 +53,9 @@ GridView {
     acceptedButtons: Qt.NoButton
     boundsBehavior: Flickable.StopAtBounds
     model: backend.folder
-    // Tiles grow with the zoom; the name and details under them don't. A
-    // narrow pane (one side of a split) caps it at a tile its width holds.
+    // Tiles grow with the zoom; the name and details under them follow the
+    // text size. A narrow pane (one side of a split) caps it at a tile its
+    // width holds.
     property real zoom: 1
     readonly property real tileZoom: Math.max(0.5, Math.min(zoom, (width - 40) / 128))
     signal zoomRequested(int step)

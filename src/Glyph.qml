@@ -9,7 +9,7 @@ Item {
 
     property string name: "file"
     property color color: theme.foreground
-    property real size: 18
+    property real size: Math.max(18, theme.scaled(18))
     property real stroke: 1.6
     // Brand marks are solid shapes rather than line drawings.
     readonly property bool filled: name === "dropbox"

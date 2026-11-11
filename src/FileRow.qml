@@ -75,8 +75,8 @@ Item {
         spacing: 12
 
         Item {
-            implicitWidth: 20
-            implicitHeight: 20
+            implicitWidth: Math.max(20, theme.scaled(20))
+            implicitHeight: Math.max(20, theme.scaled(20))
             Image {
                 id: thumb
                 anchors.fill: parent
@@ -94,8 +94,8 @@ Item {
             }
             Rectangle {
                 id: rowMask
-                width: 20
-                height: 20
+                width: Math.max(20, theme.scaled(20))
+                height: Math.max(20, theme.scaled(20))
                 radius: Math.min(4, theme.radius)
                 visible: false
                 layer.enabled: true
@@ -104,7 +104,7 @@ Item {
                 anchors.centerIn: parent
                 visible: !thumb.visible
                 name: row.glyph
-                size: 16
+                size: Math.max(16, theme.scaled(16))
                 color: row.isDir ? theme.accent : theme.secondaryForeground
             }
         }
@@ -139,7 +139,7 @@ Item {
         Glyph {
             visible: row.chevron && row.isDir
             name: "forward"
-            size: 12
+            size: Math.max(12, theme.scaled(12))
             color: theme.secondaryForeground
         }
     }
