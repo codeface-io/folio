@@ -1168,6 +1168,102 @@ private slots:
         QVERIFY(QDir(files).isEmpty());
     }
 
+    void fileOpsCancelStopsACopyPartway()
+    {
+        // Cancel stops at the next file, or the next piece of a big one: a
+        // file copied partway is removed, and what was copied before stays.
+        // Copying a pipe reads it as its writer writes, so the copy is
+        // partway for as long as the test likes.
+        QTemporaryDir from, to;
+        write(from.filePath("a.txt"), "a");
+        const QByteArray pipe = QFile::encodeName(from.filePath("pipe"));
+        QVERIFY(mkfifo(pipe.constData(), 0600) == 0);
+        FileOps::Job job;
+        QString error;
+        QFuture<QStringList> copied = QtConcurrent::run([&] {
+            return FileOps::transfer({from.filePath("a.txt"), from.filePath("pipe")}, to.path(), FileOps::Copy, &error, &job);
+        });
+        int writer = -1;
+        const auto finish = qScopeGuard([&] {
+            if (writer >= 0)
+                close(writer);
+            copied.waitForFinished();
+        });
+        QVERIFY(QTest::qWaitFor([&] { return (writer = open(pipe.constData(), O_WRONLY | O_NONBLOCK)) >= 0; }));
+        QCOMPARE(::write(writer, "partial", 7), 7);
+        QTRY_VERIFY(job.bytes >= 8);
+        job.cancelled = true;
+        QCOMPARE(::write(writer, "more", 4), 4);
+        close(std::exchange(writer, -1));
+        QCOMPARE(copied.result(), QStringList({"a.txt"}));
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(job.done.load(), 1);
+        QCOMPARE(job.total.load(), 2);
+        QVERIFY(QFile::exists(to.filePath("a.txt")));
+        QVERIFY(!QFileInfo::exists(to.filePath("pipe")));
+
+        // From the window, Cancel says how far it got.
+        QTemporaryDir again;
+        FileOps ops;
+        QSignalSpy notice(&ops, &FileOps::notice);
+        ops.copy({from.filePath("a.txt"), from.filePath("pipe")});
+        ops.paste(again.path());
+        QVERIFY(!ops.busy().isEmpty());
+        QVERIFY(QTest::qWaitFor([&] { return (writer = open(pipe.constData(), O_WRONLY | O_NONBLOCK)) >= 0; }));
+        ops.cancel();
+        QCOMPARE(::write(writer, "x", 1), 1);
+        close(std::exchange(writer, -1));
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QCOMPARE(notice.count(), 1);
+        QCOMPARE(notice.first().first().toString(), QString("Stopped after 1 of 2 items."));
+        QVERIFY(!QFileInfo::exists(again.filePath("pipe")));
+    }
+
+    void fileOpsCancelledMoveAcrossDrivesKeepsOriginals()
+    {
+        // Across drives each original goes once it's copied, so a move
+        // cancelled partway removes only what fully arrived: the file it
+        // was on stays, and so does what it never reached.
+        const auto other = elsewhere();
+        if (!other)
+            QSKIP("Needs a second drive.");
+        QTemporaryDir from;
+        QDir(from.path()).mkdir("box");
+        write(from.filePath("box/a.txt"), "a");
+        write(from.filePath("box/z.txt"), "z");
+        const QByteArray pipe = QFile::encodeName(from.filePath("box/pipe"));
+        QVERIFY(mkfifo(pipe.constData(), 0600) == 0);
+        FileOps::Job job;
+        QString error;
+        QFuture<QStringList> moved = QtConcurrent::run([&] {
+            return FileOps::transfer({from.filePath("box")}, other->path(), FileOps::Move, &error, &job);
+        });
+        int writer = -1;
+        const auto finish = qScopeGuard([&] {
+            if (writer >= 0)
+                close(writer);
+            moved.waitForFinished();
+        });
+        QVERIFY(QTest::qWaitFor([&] { return (writer = open(pipe.constData(), O_WRONLY | O_NONBLOCK)) >= 0; }));
+        QCOMPARE(::write(writer, "partial", 7), 7);
+        QTRY_VERIFY(job.bytes >= 8);
+        job.cancelled = true;
+        QCOMPARE(::write(writer, "more", 4), 4);
+        close(std::exchange(writer, -1));
+        // What arrived is the only copy of a.txt now, so it's shown.
+        QCOMPARE(moved.result(), QStringList({"box"}));
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        // A single folder counts what's in it.
+        QCOMPARE(job.total.load(), 3);
+        QCOMPARE(job.done.load(), 1);
+        QVERIFY(QFile::exists(other->filePath("box/a.txt")));
+        QVERIFY(!QFile::exists(from.filePath("box/a.txt")));
+        QVERIFY(QFileInfo::exists(from.filePath("box/pipe")));
+        QVERIFY(!QFileInfo::exists(other->filePath("box/pipe")));
+        QVERIFY(QFile::exists(from.filePath("box/z.txt")));
+        QVERIFY(!QFile::exists(other->filePath("box/z.txt")));
+    }
+
     void kindsFromMimeTypes()
     {
         QCOMPARE(FolderModel::kindForMime("application/pdf"), QString("pdf"));
@@ -1972,6 +2068,12 @@ private slots:
     }
 
 private:
+    static QByteArray contents(const QString &path)
+    {
+        QFile file(path);
+        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    }
+
     static void write(const QString &path, const QByteArray &contents)
     {
         QFile file(path);

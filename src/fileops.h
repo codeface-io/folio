@@ -5,16 +5,18 @@
 #include <QStringList>
 #include <QUrl>
 #include <QVariantList>
+#include <atomic>
 #include <functional>
+#include <memory>
 
 class QMimeData;
 class QProcess;
 
 // What can be done to files: the clipboard (copy, cut, paste, and yanking
 // paths as text), trash, rename, new folder, and opening with another app.
-// Long work (copying a folder of videos) runs off the UI thread and reports
-// through `busy`; nothing is ever overwritten, so a name that's taken gets a
-// "(copy)" name beside it.
+// Long work (copying a folder of videos) runs off the UI thread, reports how
+// far it's got through `busy`, and can be cancelled. Nothing is ever
+// overwritten, so a name that's taken gets a "(copy)" name beside it.
 class FileOps : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString busy READ busy NOTIFY busyChanged)
@@ -25,6 +27,18 @@ public:
 
     QString busy() const { return m_busy; }
     bool canPaste() const;
+
+    // How far a piece of work has got, and whether it's been asked to stop:
+    // the worker counts and checks, the UI thread shows and asks.
+    struct Job {
+        std::atomic<bool> cancelled = false;
+        std::atomic<int> done = 0, total = 0;
+        // Bytes copied so far, for showing progress through one big file.
+        std::atomic<qint64> bytes = 0;
+        // A single folder counts what's in it as its items, set by the
+        // worker once it has listed it.
+        QString countIn;
+    };
 
     // The clipboard holds files the way GNOME and KDE apps expect
     // (x-special/gnome-copied-files plus text/uri-list), and their paths as
@@ -90,6 +104,9 @@ public:
     Q_INVOKABLE void openWith(const QString &path, const QString &appId);
     Q_INVOKABLE void openTerminal(const QString &folder);
 
+    // Stops the work under way at the next file; what's done stays done.
+    Q_INVOKABLE void cancel();
+
     // Building blocks, kept static for tests.
     static QMimeData *mimeDataFor(const QStringList &paths, bool cut);
     // The paths on the clipboard and whether they were cut.
@@ -100,7 +117,10 @@ public:
     // Copies `from` to `to`, a folder with all it holds. Moving, each file
     // is removed once it's copied and each folder once it's empty; what
     // can't be removed is left where it is.
-    static bool copyRecursively(const QString &from, const QString &to, QString *error, bool move = false);
+    // With a job, it counts the bytes it copies and stops when asked; a file
+    // stopped partway is removed.
+    static bool copyRecursively(const QString &from, const QString &to, QString *error, bool move = false,
+                                Job *job = nullptr);
     // The archive name for compressing these into `folder`: "name.zip" for
     // one item, "Archive.zip" for several; never one that exists.
     static QString archiveName(const QStringList &paths, const QString &folder);
@@ -119,14 +139,15 @@ public:
     // anything else, such as what's inside a trashed folder, which has none.
     static QString infoFileFor(const QString &trashedPath);
     // Restores one item; returns where it went, or empty with `error` set.
-    static QString restoreOne(const QString &trashedPath, QString *error);
+    static QString restoreOne(const QString &trashedPath, QString *error, Job *job = nullptr);
     static bool deleteTrashed(const QString &trashedPath);
-    static int emptyTrashDir(const QString &trashDir);
+    static int emptyTrashDir(const QString &trashDir, Job *job = nullptr);
     // How transfer() takes the paths: copied, moved, or as a drop takes
     // them, each moved from the folder's drive and copied from any other.
     enum Mode { Copy, Move, Drop };
     // Copies or moves each path into `folder`; returns the new names.
-    static QStringList transfer(const QStringList &paths, const QString &folder, Mode mode, QString *error);
+    static QStringList transfer(const QStringList &paths, const QString &folder, Mode mode, QString *error,
+                                Job *job = nullptr);
 
 signals:
     void busyChanged();
@@ -142,20 +163,26 @@ private:
     // saying why when something is, so what's refused doesn't just do
     // nothing.
     bool idle();
-    // Runs `work` off the UI thread while showing `busy`, then hands what
-    // it returns to `done`, back on this one.
+    // Runs `work` off the UI thread with a job it counts in and checks,
+    // showing what `label` makes of the job meanwhile, then hands what it
+    // returns to `done`, back on this one.
     template <typename Work, typename Done>
-    void inBackground(const QString &busy, Work work, Done done);
-    // Copies or moves off the UI thread, showing `busy` (or how many are
-    // moving or copying) meanwhile.
+    void inBackground(const std::function<QString(const Job &)> &label, Work work, Done done);
+    // Copies or moves off the UI thread, showing how far it's got meanwhile.
     void transferInBackground(const QStringList &paths, const QString &folder, Mode mode, bool releaseClipboard,
-                              const QString &busy = {});
+                              bool duplicating = false);
+    // Says the work was stopped, and how far it got.
+    void sayStopped(const Job &job);
     // Runs a helper program (bsdtar, dropbox-cli, tailscale) while showing
     // `busy`, one piece of work at a time like the rest. `missing` says
-    // what to install when it isn't there; `finished` gets its exit code,
-    // or -1 if it crashed.
-    void runTool(const QString &program, const QStringList &args, const QString &busy, const QString &missing,
-                 const std::function<void(QProcess *, int)> &finished);
+    // what to install when it isn't there, and `stopped` what a cancel
+    // left; `finished` gets its exit code, or -1 if it crashed. Returns the
+    // program, or null when other work is under way.
+    QProcess *runTool(const QString &program, const QStringList &args, const QString &busy, const QString &missing,
+                      const QString &stopped, const std::function<void(QProcess *, int)> &finished);
 
     QString m_busy;
+    std::shared_ptr<Job> m_job;
+    QProcess *m_process = nullptr;
+    bool m_killed = false;
 };

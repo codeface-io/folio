@@ -129,11 +129,12 @@ FocusScope {
     Shortcut { sequence: "Delete"; enabled: pane.fileKeys; onActivated: pane.deleteSelected() }
     Shortcut { sequence: "F2"; enabled: pane.fileKeys && !pane.inTrash; onActivated: if (pane.current.path) rename.open(pane.current) }
     Shortcut { sequences: [StandardKey.SelectAll]; enabled: pane.keys; onActivated: backend.folder.selectAll() }
-    // Escape narrows a selection of several back to the cursor, then ends
-    // a search.
+    // Escape stops file work under way; otherwise it narrows a selection
+    // of several back to the cursor, then ends a search.
+    Shortcut { sequence: "Escape"; enabled: pane.keys && fileOps.busy.length > 0; onActivated: fileOps.cancel() }
     Shortcut {
         sequence: "Escape"
-        enabled: pane.keys && (backend.folder.selectedCount > 1 || backend.folder.query.length > 0)
+        enabled: pane.keys && fileOps.busy.length === 0 && (backend.folder.selectedCount > 1 || backend.folder.query.length > 0)
         onActivated: {
             if (backend.folder.selectedCount > 1)
                 backend.folder.selectOnly(view.item ? view.item.currentIndex : -1)
@@ -279,6 +280,13 @@ FocusScope {
                     text: backend.message || backend.folder.error || backend.busy || fileOps.busy || backend.notice
                     color: theme.brightForeground
                     elide: Text.ElideRight
+                }
+                // File work can be stopped where it's shown.
+                PlainButton {
+                    visible: fileOps.busy.length > 0 && bannerText.text === fileOps.busy
+                    implicitHeight: 28
+                    text: qsTr("Cancel")
+                    onClicked: fileOps.cancel()
                 }
                 IconButton {
                     visible: backend.message.length > 0

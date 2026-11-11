@@ -13,7 +13,12 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QUrl>
+#include <QTimer>
 #include <QtConcurrent>
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+#include <fcntl.h>
 #include <unistd.h>
 
 // GIO's headers use `signals` as a struct member, which Qt defines as a
@@ -111,7 +116,78 @@ QString FileOps::freeName(const QString &folder, const QString &name) {
     }
 }
 
-bool FileOps::copyRecursively(const QString &from, const QString &to, QString *error, bool move) {
+// Whether something is at `path`, a link that leads nowhere included.
+static bool taken(const QString &path) {
+    const QFileInfo info(path);
+    return info.exists() || info.isSymLink();
+}
+
+static bool isFolder(const QString &path) {
+    const QFileInfo info(path);
+    return info.isDir() && !info.isSymLink();
+}
+
+static bool writeAll(int fd, const char *data, qint64 size) {
+    while (size > 0) {
+        const ssize_t n = ::write(fd, data, size);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            return false;
+        data += n;
+        size -= n;
+    }
+    return true;
+}
+
+// Copies a file a piece at a time, so a big one can be stopped partway (and
+// is then removed), counting what's copied. copy_file_range lets the kernel
+// do the copying, which on btrfs shares the blocks rather than copying them;
+// what it can't take (a pipe, some drives) is read and written instead. Like
+// QFile::copy, it never overwrites, and the copy gets the file's permissions.
+static bool copyFile(const QString &from, const QString &to, FileOps::Job *job) {
+    QFile in(from), out(to);
+    if (!in.open(QIODevice::ReadOnly) || !out.open(QIODevice::WriteOnly | QIODevice::NewOnly))
+        return false;
+    bool kernel = true, ok = true;
+    QByteArray buffer;
+    for (;;) {
+        if (job && job->cancelled) {
+            ok = false;
+            break;
+        }
+        ssize_t n;
+        if (kernel) {
+            n = copy_file_range(in.handle(), nullptr, out.handle(), nullptr, 8 << 20, 0);
+            if (n < 0 && (errno == EXDEV || errno == EINVAL || errno == ENOSYS || errno == EOPNOTSUPP)) {
+                kernel = false;
+                continue;
+            }
+        } else {
+            buffer.resize(1 << 20);
+            n = ::read(in.handle(), buffer.data(), buffer.size());
+            if (n > 0 && !writeAll(out.handle(), buffer.constData(), n))
+                n = -1;
+        }
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0) {
+            ok = n == 0;
+            break;
+        }
+        if (job)
+            job->bytes += n;
+    }
+    // Some drives (FAT) keep no permissions; the copy is still a copy.
+    if (ok)
+        out.setPermissions(in.permissions());
+    out.close();
+    if (!ok)
+        out.remove();
+    return ok;
+}
+
+bool FileOps::copyRecursively(const QString &from, const QString &to, QString *error, bool move, Job *job) {
     const QFileInfo info(from);
     if (info.isSymLink()) {
         // Links are copied as links, not followed, and as written: one
@@ -125,8 +201,10 @@ bool FileOps::copyRecursively(const QString &from, const QString &to, QString *e
         return true;
     }
     if (!info.isDir()) {
-        if (!QFile::copy(from, to)) {
-            *error = QObject::tr("Couldn't copy %1.").arg(info.fileName());
+        if (!copyFile(from, to, job)) {
+            // Stopped when asked: that's not a problem to report.
+            if (!job || !job->cancelled)
+                *error = QObject::tr("Couldn't copy %1.").arg(info.fileName());
             return false;
         }
         if (move)
@@ -148,9 +226,17 @@ bool FileOps::copyRecursively(const QString &from, const QString &to, QString *e
     }
     const QDir source(from);
     const auto entries = source.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
-    for (const QFileInfo &entry : entries)
-        if (!copyRecursively(entry.filePath(), QDir(to).filePath(entry.fileName()), error, move))
+    const bool counting = job && !job->countIn.isEmpty() && job->countIn == QDir::cleanPath(from);
+    if (counting)
+        job->total = entries.size();
+    for (const QFileInfo &entry : entries) {
+        if (job && job->cancelled)
             return false;
+        if (!copyRecursively(entry.filePath(), QDir(to).filePath(entry.fileName()), error, move, job))
+            return false;
+        if (counting)
+            ++job->done;
+    }
     QFile::setPermissions(to, info.permissions());
     // Only once it's empty: what turned up in it while the rest moved was
     // never copied, so it stays where it is, and the folder with it.
@@ -202,10 +288,48 @@ static bool inside(const QString &folder, const QString &path) {
     return item.isDir() && !item.isSymLink() && (target == self || target.startsWith(self + '/'));
 }
 
-QStringList FileOps::transfer(const QStringList &paths, const QString &folder, Mode mode, QString *error) {
+// A rename that never replaces what's there. A drive that can't promise
+// that (some network ones) gets the check first, as QFile::rename does.
+static bool renameNoReplace(const QString &from, const QString &to) {
+    const QByteArray source = QFile::encodeName(from), target = QFile::encodeName(to);
+    if (renameat2(AT_FDCWD, source.constData(), AT_FDCWD, target.constData(), RENAME_NOREPLACE) == 0)
+        return true;
+    if (errno != EINVAL)
+        return false;
+    return !taken(to) && ::rename(source.constData(), target.constData()) == 0;
+}
+
+// Puts one item at `to`. A rename is instant on the same drive; across
+// drives a move is a copy that removes each original once it's copied. A
+// link is made again rather than renamed, which across drives would copy
+// what it leads to.
+static bool put(const QString &from, const QString &to, bool move, QString *error, FileOps::Job *job) {
+    const QFileInfo info(from);
+    if (move && !info.isSymLink() && renameNoReplace(from, to))
+        return true;
+    if (!FileOps::copyRecursively(from, to, error, move, job)) {
+        // Each original went as it was copied, so what arrived is now the
+        // only copy of it: it's said to be only part.
+        if (move && taken(to) && !error->isEmpty())
+            *error = QObject::tr("Moved only part of %1: %2").arg(info.fileName(), *error);
+        return false;
+    }
+    if (move && taken(from)) {
+        *error = QObject::tr("Copied %1, but couldn't remove the original.").arg(info.fileName());
+        return false;
+    }
+    return true;
+}
+
+QStringList FileOps::transfer(const QStringList &paths, const QString &folder, Mode mode, QString *error, Job *job) {
     QStringList made;
     const QString target = QDir::cleanPath(folder);
-    for (const QString &path : outermost(paths)) {
+    const QStringList outer = outermost(paths);
+    if (job)
+        job->total = outer.size();
+    for (const QString &path : outer) {
+        if (job && job->cancelled)
+            break;
         const QFileInfo info(path);
         if (!info.exists() && !info.isSymLink()) {
             *error = QObject::tr("%1 is no longer there.").arg(info.fileName());
@@ -213,37 +337,30 @@ QStringList FileOps::transfer(const QStringList &paths, const QString &folder, M
         }
         const bool move = mode == Move || (mode == Drop && sameDrive(path, target));
         // Moving something into the folder it's already in does nothing.
-        if (move && QDir::cleanPath(info.absolutePath()) == target)
+        if (move && QDir::cleanPath(info.absolutePath()) == target) {
+            if (job)
+                ++job->done;
             continue;
+        }
         if (inside(target, path)) {
             *error = QObject::tr("Can't put %1 inside itself.").arg(info.fileName());
             break;
         }
         const QString name = freeName(target, info.fileName());
         const QString destination = QDir(target).filePath(name);
-        // A rename is instant on the same drive; across drives a move is a
-        // copy that removes each original once it's copied. A link is made
-        // again rather than renamed, which across drives would copy what it
-        // leads to.
-        if (move && !info.isSymLink() && QFile::rename(path, destination)) {
-            made << name;
-            continue;
-        }
-        if (!copyRecursively(path, destination, error, move)) {
-            // Each original went as it was copied, so what arrived is now the
-            // only copy of it: it's shown, and said to be only part.
-            if (move && QFileInfo::exists(destination)) {
+        // A single folder counts what's in it, so there's more to count.
+        if (job && outer.size() == 1 && isFolder(path))
+            job->countIn = QDir::cleanPath(path);
+        if (!put(path, destination, move, error, job)) {
+            // What arrived of a move is now the only copy of it, and what was
+            // copied before a cancel stays: either is shown.
+            if (taken(destination) && (move || error->isEmpty()))
                 made << name;
-                *error = QObject::tr("Moved only part of %1: %2").arg(info.fileName(), *error);
-            }
             break;
         }
         made << name;
-        const QFileInfo left(path);
-        if (move && (left.exists() || left.isSymLink())) {
-            *error = QObject::tr("Copied %1, but couldn't remove the original.").arg(info.fileName());
-            break;
-        }
+        if (job && job->countIn.isEmpty())
+            ++job->done;
     }
     return made;
 }
@@ -311,43 +428,93 @@ QStringList FileOps::localPaths(const QList<QUrl> &urls) const {
 }
 
 template <typename Work, typename Done>
-void FileOps::inBackground(const QString &busy, Work work, Done done) {
-    setBusy(busy);
-    auto *watcher = new QFutureWatcher<std::invoke_result_t<Work>>(this);
-    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, done = std::move(done)] {
+void FileOps::inBackground(const std::function<QString(const Job &)> &label, Work work, Done done) {
+    auto job = std::make_shared<Job>();
+    m_job = job;
+    setBusy(label(*job));
+    auto *watcher = new QFutureWatcher<std::invoke_result_t<Work, Job &>>(this);
+    // How far it's got, a few times a second.
+    auto *timer = new QTimer(watcher);
+    connect(timer, &QTimer::timeout, this, [this, job, label] { setBusy(label(*job)); });
+    timer->start(200);
+    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, timer, job, done = std::move(done)] {
+        timer->stop();
         watcher->deleteLater();
+        m_job.reset();
         setBusy({});
-        done(watcher->result());
+        done(watcher->result(), *job);
     });
-    watcher->setFuture(QtConcurrent::run(std::move(work)));
+    watcher->setFuture(QtConcurrent::run([job, work = std::move(work)]() mutable { return work(*job); }));
+}
+
+void FileOps::cancel() {
+    if (m_job)
+        m_job->cancelled = true;
+    if (m_process) {
+        m_killed = true;
+        m_process->kill();
+    }
+}
+
+// "Restoring 3 of 120 items…" once there are several, `one` before that.
+static QString counting(const FileOps::Job &job, const QString &several, const QString &one) {
+    return job.total > 1 ? several.arg(qMin(job.done + 1, int(job.total))) : one;
+}
+
+void FileOps::sayStopped(const Job &job) {
+    emit notice(tr("Stopped after %1 of %n items.", "", job.total).arg(job.done.load()));
+}
+
+namespace {
+// What work hands back from the worker: what it made, and what went wrong.
+struct Outcome {
+    QStringList made;
+    QString error;
+    QStringList failures;
+};
 }
 
 void FileOps::transferInBackground(const QStringList &paths, const QString &folder, Mode mode, bool releaseClipboard,
-                                   const QString &busy) {
+                                   bool duplicating) {
     // A drop says what its first item does; each is moved or copied by its
     // own drive.
     const bool moving = mode == Move || (mode == Drop && sameDrive(paths.first(), folder));
-    const QString showing = !busy.isEmpty() ? busy
-                            : moving        ? tr("Moving %n items…", "", paths.size())
-                                            : tr("Copying %n items…", "", paths.size());
+    const QFileInfo first(paths.first());
+    // A single file shows how much of it is copied, its size known now.
+    const qint64 size = paths.size() == 1 && first.isFile() && !first.isSymLink() ? first.size() : 0;
+    const QString name = first.fileName();
+    const int count = paths.size();
     inBackground(
-        showing,
-        [paths, folder, mode] {
-            QString error;
-            const QStringList made = transfer(paths, folder, mode, &error);
-            return qMakePair(made, error);
+        [=](const Job &job) {
+            const auto bytes = [](qint64 n) { return QLocale().formattedDataSize(n, 1, QLocale::DataSizeSIFormat); };
+            const QString one = size > 0 && job.bytes > 0
+                                    ? (duplicating ? tr("Duplicating %1: %2 of %3…").arg(name, bytes(job.bytes), bytes(size))
+                                       : moving    ? tr("Moving %1: %2 of %3…").arg(name, bytes(job.bytes), bytes(size))
+                                                   : tr("Copying %1: %2 of %3…").arg(name, bytes(job.bytes), bytes(size)))
+                                : duplicating ? tr("Duplicating %1…").arg(name)
+                                : moving      ? tr("Moving %n items…", "", count)
+                                              : tr("Copying %n items…", "", count);
+            return moving ? counting(job, tr("Moving %1 of %n items…", "", job.total), one)
+                          : counting(job, tr("Copying %1 of %n items…", "", job.total), one);
         },
-        [this, paths, folder, releaseClipboard](const QPair<QStringList, QString> &result) {
-            const auto &[made, error] = result;
+        [paths, folder, mode](Job &job) {
+            Outcome result;
+            result.made = transfer(paths, folder, mode, &result.error, &job);
+            return result;
+        },
+        [this, paths, folder, releaseClipboard](const Outcome &result, const Job &job) {
             // Only the cut that was pasted is let go of; something copied
             // while it moved stays on the clipboard.
             bool cut = false;
-            if (releaseClipboard && error.isEmpty() && pathsFrom(QGuiApplication::clipboard()->mimeData(), &cut) == paths && cut)
+            if (releaseClipboard && result.error.isEmpty() && !job.cancelled
+                && pathsFrom(QGuiApplication::clipboard()->mimeData(), &cut) == paths && cut)
                 QGuiApplication::clipboard()->clear();
-            if (!error.isEmpty())
-                emit failed(error);
-            if (!made.isEmpty())
-                emit done(folder, made.first());
+            if (!result.error.isEmpty())
+                emit failed(result.error);
+            else if (job.cancelled)
+                sayStopped(job);
+            if (!result.made.isEmpty())
+                emit done(folder, result.made.first());
         });
 }
 
@@ -355,7 +522,7 @@ void FileOps::duplicate(const QString &path) {
     if (!idle())
         return;
     const QFileInfo info(path);
-    transferInBackground({path}, info.absolutePath(), Copy, false, tr("Duplicating %1…").arg(info.fileName()));
+    transferInBackground({path}, info.absolutePath(), Copy, false, true);
 }
 
 QString FileOps::archiveName(const QStringList &paths, const QString &folder) {
@@ -388,30 +555,50 @@ void FileOps::compress(const QStringList &selected) {
         return;
     }
     const QString archive = archiveName(paths, folder);
-    QStringList args{"-a", "-cf", temporary->filePath(archive), "-C", folder, "--"};
+    // -v names each item as bsdtar starts on it, which counts them.
+    QStringList args{"-a", "-v", "-cf", temporary->filePath(archive), "-C", folder, "--"};
+    QStringList items;
     for (const QString &path : paths)
-        args << QDir(folder).relativeFilePath(path);
-    runTool("bsdtar", args, tr("Compressing into %1…").arg(archive),
-            tr("Compressing needs bsdtar, from the libarchive package."),
-            [this, paths, folder, temporary, archive](QProcess *process, int code) {
-                if (code != 0) {
-                    emit failed(tr("Couldn't compress: %1").arg(QString::fromUtf8(process->readAllStandardError()).trimmed()));
+        items << QDir(folder).relativeFilePath(path);
+    // What bsdtar says that isn't an item is a problem, kept for saying why
+    // it failed.
+    auto errors = std::make_shared<QString>();
+    const auto read = [this, items, archive, errors](QProcess *process) {
+        while (process->canReadLine()) {
+            const QString line = QString::fromUtf8(process->readLine()).chopped(1);
+            if (!line.startsWith("a "))
+                *errors += line + '\n';
+            else if (const qsizetype at = items.indexOf(line.mid(2)); at >= 0 && items.size() > 1)
+                setBusy(tr("Compressing %1 of %n items into %2…", "", items.size()).arg(at + 1).arg(archive));
+        }
+    };
+    QProcess *process = runTool(
+        "bsdtar", args + items, tr("Compressing into %1…").arg(archive),
+        tr("Compressing needs bsdtar, from the libarchive package."), tr("Stopped compressing; no archive was made."),
+        [this, paths, folder, temporary, archive, errors, read](QProcess *process, int code) {
+            if (code != 0) {
+                read(process);
+                emit failed(tr("Couldn't compress: %1").arg((*errors + QString::fromUtf8(process->readAll())).trimmed()));
+                return;
+            }
+            // Only a finished archive is named, with a name that's free
+            // now. A rename never overwrites, so if another took that
+            // name first, it takes the next.
+            QFile made(temporary->filePath(archive));
+            QString name = archiveName(paths, folder);
+            while (!made.rename(QDir(folder).filePath(name))) {
+                if (!QFileInfo::exists(QDir(folder).filePath(name))) {
+                    emit failed(tr("Couldn't compress: %1").arg(made.errorString()));
                     return;
                 }
-                // Only a finished archive is named, with a name that's free
-                // now. A rename never overwrites, so if another took that
-                // name first, it takes the next.
-                QFile made(temporary->filePath(archive));
-                QString name = archiveName(paths, folder);
-                while (!made.rename(QDir(folder).filePath(name))) {
-                    if (!QFileInfo::exists(QDir(folder).filePath(name))) {
-                        emit failed(tr("Couldn't compress: %1").arg(made.errorString()));
-                        return;
-                    }
-                    name = archiveName(paths, folder);
-                }
-                emit done(folder, name);
-            });
+                name = archiveName(paths, folder);
+            }
+            emit done(folder, name);
+        });
+    if (!process)
+        return;
+    process->setReadChannel(QProcess::StandardError);
+    connect(process, &QProcess::readyReadStandardError, this, [process, read] { read(process); });
 }
 
 void FileOps::shareLocalSend(const QStringList &paths) {
@@ -429,7 +616,7 @@ bool FileOps::hasLocalSend() const {
 void FileOps::dropboxLink(const QString &path) {
     const QString name = QFileInfo(path).fileName();
     runTool("dropbox-cli", {"sharelink", path}, tr("Getting a Dropbox link for %1…").arg(name),
-            tr("Dropbox links need dropbox-cli, which isn't installed."),
+            tr("Dropbox links need dropbox-cli, which isn't installed."), tr("Stopped getting the Dropbox link."),
             [this, name](QProcess *process, int code) {
                 const QString out = QString::fromUtf8(process->readAllStandardOutput()).trimmed();
                 // dropbox-cli prints the link, or a sentence saying why not.
@@ -449,7 +636,7 @@ void FileOps::shareTaildrop(const QStringList &paths, const QString &host) {
         return;
     const QString machine = host.section('.', 0, 0);
     runTool("tailscale", QStringList{"file", "cp"} + paths + QStringList{host + ":"}, tr("Sending to %1…").arg(machine),
-            tr("Sending with Taildrop needs tailscale, which isn't installed."),
+            tr("Sending with Taildrop needs tailscale, which isn't installed."), tr("Stopped sending to %1.").arg(machine),
             [this, machine](QProcess *process, int code) {
                 if (code != 0)
                     emit failed(tr("Couldn't send to %1: %2").arg(machine, QString::fromUtf8(process->readAllStandardError()).trimmed()));
@@ -459,28 +646,36 @@ void FileOps::shareTaildrop(const QStringList &paths, const QString &host) {
 void FileOps::trash(const QStringList &paths) {
     if (paths.isEmpty() || !idle())
         return;
-    // GIO follows the freedesktop Trash spec, including each drive's own
-    // .Trash folder, so Restore in any file manager puts things back. It
-    // takes one item at a time, which on a slow drive adds up.
+    const int count = paths.size();
     inBackground(
-        tr("Moving %n items to the trash…", "", paths.size()),
-        [paths] {
-            QStringList failedNames;
-            for (const QString &path : outermost(paths)) {
+        [count](const Job &job) {
+            return counting(job, tr("Moving %1 of %n items to the trash…", "", job.total),
+                            tr("Moving %n items to the trash…", "", count));
+        },
+        [paths](Job &job) {
+            Outcome result;
+            const QStringList outer = outermost(paths);
+            job.total = outer.size();
+            for (const QString &path : outer) {
+                if (job.cancelled)
+                    break;
                 GFile *file = g_file_new_for_path(path.toUtf8().constData());
                 GError *error = nullptr;
                 if (!g_file_trash(file, nullptr, &error)) {
-                    failedNames << QFileInfo(path).fileName() + (error ? QStringLiteral(" (") + QString::fromUtf8(error->message) + ")" : QString());
+                    result.failures << QFileInfo(path).fileName() + (error ? QStringLiteral(" (") + QString::fromUtf8(error->message) + ")" : QString());
                     if (error)
                         g_error_free(error);
                 }
                 g_object_unref(file);
+                ++job.done;
             }
-            return failedNames;
+            return result;
         },
-        [this](const QStringList &failedNames) {
-            if (!failedNames.isEmpty())
-                emit failed(tr("Couldn't move to the trash: %1").arg(failedNames.join(", ")));
+        [this](const Outcome &result, const Job &job) {
+            if (!result.failures.isEmpty())
+                emit failed(tr("Couldn't move to the trash: %1").arg(result.failures.join(", ")));
+            else if (job.cancelled)
+                sayStopped(job);
         });
 }
 
@@ -552,7 +747,7 @@ QDateTime FileOps::deletedAt(const QString &trashedPath) {
     return {};
 }
 
-QString FileOps::restoreOne(const QString &trashedPath, QString *error) {
+QString FileOps::restoreOne(const QString &trashedPath, QString *error, Job *job) {
     const QString original = originalPath(trashedPath);
     if (original.isEmpty()) {
         *error = tr("%1 has no record of where it came from.").arg(QFileInfo(trashedPath).fileName());
@@ -573,10 +768,13 @@ QString FileOps::restoreOne(const QString &trashedPath, QString *error) {
     // Across drives (rare: trash lives on the item's own drive), it moves
     // the way a move across drives does, each original removed once it's
     // copied. The note stays while anything of it is left in the trash.
-    if (!copyRecursively(trashedPath, destination, error, true)) {
-        // What arrived is now the only copy of it, so where it went is said.
+    if (!copyRecursively(trashedPath, destination, error, true, job)) {
+        // What arrived is now the only copy of it, so where it went is said,
+        // stopped when asked or not.
+        const QString name = QFileInfo(trashedPath).fileName();
         if (QFileInfo::exists(destination))
-            *error = tr("Restored only part of %1, to %2: %3").arg(QFileInfo(trashedPath).fileName(), destination, *error);
+            *error = error->isEmpty() ? tr("Stopped partway: part of %1 is restored, to %2.").arg(name, destination)
+                                      : tr("Restored only part of %1, to %2: %3").arg(name, destination, *error);
         return {};
     }
     if (QFileInfo::exists(trashedPath) || QFileInfo(trashedPath).isSymLink()) {
@@ -597,12 +795,17 @@ bool FileOps::deleteTrashed(const QString &trashedPath) {
     return removed;
 }
 
-int FileOps::emptyTrashDir(const QString &trashDir) {
+int FileOps::emptyTrashDir(const QString &trashDir, Job *job) {
     int count = 0;
     const QDir files(trashDir + "/files");
-    for (const QFileInfo &item : files.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System))
+    for (const QFileInfo &item : files.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System)) {
+        if (job && job->cancelled)
+            break;
         if (deleteTrashed(item.absoluteFilePath()))
             ++count;
+        if (job)
+            ++job->done;
+    }
     // The size cache goes too. A note without its item stays: something
     // being trashed gets its note first, so it may be on its way.
     QFile::remove(trashDir + "/directorysizes");
@@ -620,46 +823,67 @@ void FileOps::restore(const QStringList &paths) {
     if (paths.isEmpty() || !idle())
         return;
     // Restoring across drives copies, which for a folder can take a while.
+    const int count = paths.size();
     inBackground(
-        tr("Restoring %n items…", "", paths.size()),
-        [paths] {
-            QStringList failures;
-            QString last;
-            for (const QString &path : outermost(paths)) {
-                QString error;
-                const QString to = restoreOne(path, &error);
-                if (to.isEmpty())
-                    failures << error;
-                else
-                    last = to;
-            }
-            return qMakePair(failures, last);
+        [count](const Job &job) {
+            return counting(job, tr("Restoring %1 of %n items…", "", job.total), tr("Restoring %n items…", "", count));
         },
-        [this, count = paths.size()](const QPair<QStringList, QString> &result) {
-            const auto &[failures, last] = result;
-            if (!failures.isEmpty())
-                emit failed(failures.join(' '));
-            else if (!last.isEmpty())
-                emit notice(count == 1 ? tr("Restored %1 to %2.").arg(QFileInfo(last).fileName(), QFileInfo(last).absolutePath())
+        [paths](Job &job) {
+            Outcome result;
+            const QStringList outer = outermost(paths);
+            job.total = outer.size();
+            for (const QString &path : outer) {
+                if (job.cancelled)
+                    break;
+                QString error;
+                const QString to = restoreOne(path, &error, &job);
+                if (!to.isEmpty())
+                    result.made = {to};
+                else if (!error.isEmpty())
+                    result.failures << error;
+                ++job.done;
+            }
+            return result;
+        },
+        [this, count](const Outcome &result, const Job &job) {
+            if (!result.failures.isEmpty())
+                emit failed(result.failures.join(' '));
+            else if (job.cancelled)
+                sayStopped(job);
+            else if (!result.made.isEmpty()) {
+                const QFileInfo last(result.made.first());
+                emit notice(count == 1 ? tr("Restored %1 to %2.").arg(last.fileName(), last.absolutePath())
                                        : tr("Restored %n items.", "", count));
+            }
         });
 }
 
 void FileOps::deleteForever(const QStringList &paths) {
     if (paths.isEmpty() || !idle())
         return;
+    const int count = paths.size();
     inBackground(
-        tr("Deleting %n items…", "", paths.size()),
-        [paths] {
-            int failures = 0;
-            for (const QString &path : outermost(paths))
-                if (!deleteTrashed(path))
-                    ++failures;
-            return failures;
+        [count](const Job &job) {
+            return counting(job, tr("Deleting %1 of %n items…", "", job.total), tr("Deleting %n items…", "", count));
         },
-        [this](int failures) {
-            if (failures > 0)
-                emit failed(tr("Couldn't delete %n items.", "", failures));
+        [paths](Job &job) {
+            Outcome result;
+            const QStringList outer = outermost(paths);
+            job.total = outer.size();
+            for (const QString &path : outer) {
+                if (job.cancelled)
+                    break;
+                if (!deleteTrashed(path))
+                    result.failures << path;
+                ++job.done;
+            }
+            return result;
+        },
+        [this](const Outcome &result, const Job &job) {
+            if (!result.failures.isEmpty())
+                emit failed(tr("Couldn't delete %n items.", "", result.failures.size()));
+            else if (job.cancelled)
+                sayStopped(job);
         });
 }
 
@@ -667,14 +891,26 @@ void FileOps::emptyTrash() {
     if (!idle())
         return;
     inBackground(
-        tr("Emptying the trash…"),
-        [] {
+        [](const Job &job) {
+            return counting(job, tr("Emptying the trash: %1 of %n items…", "", job.total), tr("Emptying the trash…"));
+        },
+        [](Job &job) {
+            const QStringList dirs = trashDirs();
+            int total = 0;
+            for (const QString &dir : dirs)
+                total += QDir(dir + "/files").entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System).size();
+            job.total = total;
             int count = 0;
-            for (const QString &dir : trashDirs())
-                count += emptyTrashDir(dir);
+            for (const QString &dir : dirs)
+                count += emptyTrashDir(dir, &job);
             return count;
         },
-        [this](int count) { emit notice(tr("Emptied the trash: %n items deleted.", "", count)); });
+        [this](int count, const Job &job) {
+            if (job.cancelled)
+                sayStopped(job);
+            else
+                emit notice(tr("Emptied the trash: %n items deleted.", "", count));
+        });
 }
 
 QString FileOps::rename(const QString &path, const QString &name) {
@@ -798,16 +1034,22 @@ void FileOps::openTerminal(const QString &folder) {
         emit failed(tr("Couldn't start a terminal: xdg-terminal-exec isn't installed."));
 }
 
-void FileOps::runTool(const QString &program, const QStringList &args, const QString &busy, const QString &missing,
-                      const std::function<void(QProcess *, int)> &finished) {
+QProcess *FileOps::runTool(const QString &program, const QStringList &args, const QString &busy, const QString &missing,
+                          const QString &stopped, const std::function<void(QProcess *, int)> &finished) {
     if (!idle())
-        return;
+        return nullptr;
     auto *process = new QProcess(this);
+    m_process = process;
+    m_killed = false;
     setBusy(busy);
-    connect(process, &QProcess::finished, this, [this, process, finished](int code, QProcess::ExitStatus status) {
+    connect(process, &QProcess::finished, this, [this, process, finished, stopped](int code, QProcess::ExitStatus status) {
         process->deleteLater();
+        m_process = nullptr;
         setBusy({});
-        finished(process, status == QProcess::NormalExit ? code : -1);
+        if (m_killed)
+            emit notice(stopped);
+        else
+            finished(process, status == QProcess::NormalExit ? code : -1);
     });
     // A program that isn't installed never finishes, so this is the only
     // word from it.
@@ -815,10 +1057,12 @@ void FileOps::runTool(const QString &program, const QStringList &args, const QSt
         if (error != QProcess::FailedToStart)
             return;
         process->deleteLater();
+        m_process = nullptr;
         setBusy({});
         emit failed(missing);
     });
     process->start(program, args);
+    return process;
 }
 
 bool FileOps::idle() {

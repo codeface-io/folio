@@ -8,5 +8,13 @@
   "Deleting %n items…": { "one": "Deleting %n item…", "other": "Deleting %n items…" },
   "Couldn't delete %n items.": { "one": "Couldn't delete %n item.", "other": "Couldn't delete %n items." },
   "Emptied the trash: %n items deleted.": { "one": "Emptied the trash: %n item deleted.", "other": "Emptied the trash: %n items deleted." },
-  "%n items will be deleted permanently. This can't be undone.": { "one": "%n item will be deleted permanently. This can't be undone.", "other": "%n items will be deleted permanently. This can't be undone." }
+  "%n items will be deleted permanently. This can't be undone.": { "one": "%n item will be deleted permanently. This can't be undone.", "other": "%n items will be deleted permanently. This can't be undone." },
+  "Copying %1 of %n items…": { "one": "Copying %1 of %n item…", "other": "Copying %1 of %n items…" },
+  "Moving %1 of %n items…": { "one": "Moving %1 of %n item…", "other": "Moving %1 of %n items…" },
+  "Moving %1 of %n items to the trash…": { "one": "Moving %1 of %n item to the trash…", "other": "Moving %1 of %n items to the trash…" },
+  "Restoring %1 of %n items…": { "one": "Restoring %1 of %n item…", "other": "Restoring %1 of %n items…" },
+  "Deleting %1 of %n items…": { "one": "Deleting %1 of %n item…", "other": "Deleting %1 of %n items…" },
+  "Emptying the trash: %1 of %n items…": { "one": "Emptying the trash: %1 of %n item…", "other": "Emptying the trash: %1 of %n items…" },
+  "Compressing %1 of %n items into %2…": { "one": "Compressing %1 of %n item into %2…", "other": "Compressing %1 of %n items into %2…" },
+  "Stopped after %1 of %n items.": { "one": "Stopped after %1 of %n item.", "other": "Stopped after %1 of %n items." }
 }

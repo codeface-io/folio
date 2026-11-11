@@ -37,6 +37,7 @@ Rectangle {
         ["Ctrl+Shift+N", qsTr("New folder")],
         ["Ctrl+Alt+N / Ctrl+W", qsTr("Split into two panes / close the right one")],
         ["Delete", qsTr("Move to the trash")],
+        ["Escape", qsTr("Stop the file work under way")],
         ["Right-click / Alt+⏎", qsTr("Everything else")],
         ["S / Shift+S", qsTr("Sort: name, kind, newest, oldest, size")],
         ["Ctrl+H", qsTr("Show hidden files")],
