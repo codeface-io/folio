@@ -36,8 +36,12 @@ Rectangle {
             anchors.margins: 28
             spacing: 16
 
+            // A title can name a file, and a long name wraps rather than
+            // running off the card.
             Text {
+                Layout.fillWidth: true
                 text: dialog.title
+                wrapMode: Text.Wrap
                 color: theme.brightForeground
                 font.pixelSize: 16
                 font.weight: Font.DemiBold
