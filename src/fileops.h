@@ -201,7 +201,7 @@ public:
     // for a folder onto a folder merges them, each clash inside replaced.
     enum Choice { KeepBoth, Skip, Replace };
     // The paths whose names are taken in `folder`, which would clash.
-    static QStringList clashes(const QStringList &paths, const QString &folder, Mode mode);
+    static QStringList clashes(const QStringList &paths, const QString &folder);
     // Copies or moves each path into `folder`, a clash as `choices` says
     // (keeping both when it doesn't); returns the new names. With `steps`,
     // adds each change made, for undo.

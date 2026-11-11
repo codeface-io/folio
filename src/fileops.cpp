@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 // GIO's headers use `signals` as a struct member, which Qt defines as a
@@ -399,22 +400,30 @@ static bool merge(const QString &from, const QString &to, bool move, QString *er
     return true;
 }
 
-// Whether putting `path` at `there` clashes with something else: not when
-// it's the item itself (copied onto itself, it's kept beside), nor what
-// holds it, which replacing would take along.
-static bool clashing(const QString &path, const QString &there) {
-    const QString self = QDir::cleanPath(path), other = QDir::cleanPath(there);
-    return taken(there) && self != other && !self.startsWith(other + '/');
+// Whether two paths are one item on disk, however each is reached: a file
+// in a folder reached through a link to that folder is the file itself.
+static bool sameItem(const QString &a, const QString &b) {
+    if (QDir::cleanPath(a) == QDir::cleanPath(b))
+        return true;
+    struct stat one, other;
+    return ::lstat(QFile::encodeName(a).constData(), &one) == 0 && ::lstat(QFile::encodeName(b).constData(), &other) == 0
+           && one.st_ino != 0 && one.st_dev == other.st_dev && one.st_ino == other.st_ino;
 }
 
-QStringList FileOps::clashes(const QStringList &paths, const QString &folder, Mode mode) {
+// Whether putting `path` at `there` clashes with something else: not when
+// it's the item itself (copied onto itself, it's kept beside), nor what
+// holds it, which replacing would take along. Either may be reached through
+// a link, and replacing it would then send the very item being put to the
+// trash.
+static bool clashing(const QString &path, const QString &there) {
+    return taken(there) && !sameItem(path, there) && !inside(path, there);
+}
+
+QStringList FileOps::clashes(const QStringList &paths, const QString &folder) {
     QStringList clash;
     const QString target = QDir::cleanPath(folder);
     for (const QString &path : outermost(paths)) {
         const QFileInfo info(path);
-        // Moved into the folder it's in, it stays as it is.
-        if (mode != Copy && QDir::cleanPath(info.absolutePath()) == target)
-            continue;
         if (clashing(path, QDir(target).filePath(info.fileName())))
             clash << path;
     }
@@ -439,8 +448,10 @@ QStringList FileOps::transfer(const QStringList &paths, const QString &folder, M
             break;
         }
         const bool move = mode == Move || (mode == Drop && sameDrive(path, target));
+        QString name = info.fileName();
+        const QString there = QDir(target).filePath(name);
         // Moving something into the folder it's already in does nothing.
-        if (move && QDir::cleanPath(info.absolutePath()) == target) {
+        if (move && sameItem(path, there)) {
             if (job)
                 ++job->done;
             continue;
@@ -449,10 +460,10 @@ QStringList FileOps::transfer(const QStringList &paths, const QString &folder, M
             *error = QObject::tr("Can't put %1 inside itself.").arg(info.fileName());
             break;
         }
-        QString name = info.fileName();
-        const QString there = QDir(target).filePath(name);
-        if (clashing(path, there)) {
-            const Choice choice = choices.value(path, KeepBoth);
+        // A name taken by the item itself, or by what holds it, is kept
+        // beside without asking.
+        if (taken(there)) {
+            const Choice choice = clashing(path, there) ? choices.value(path, KeepBoth) : KeepBoth;
             if (choice == Skip) {
                 if (job)
                     ++job->done;
@@ -595,7 +606,7 @@ void FileOps::sayStopped(const Job &job) {
 void FileOps::transferInBackground(const QStringList &paths, const QString &folder, Mode mode, bool releaseClipboard) {
     // Each name that's taken is asked about before anything moves; the
     // last answer starts it.
-    const QStringList clashing = clashes(paths, folder, mode);
+    const QStringList clashing = clashes(paths, folder);
     if (!clashing.isEmpty()) {
         Pending pending{{}, {}, [=, this](const QHash<QString, Choice> &choices) {
                             startTransfer(paths, folder, mode, releaseClipboard, choices);

@@ -1273,10 +1273,36 @@ private slots:
         write(from.filePath("a.txt"), "a");
         write(from.filePath("b.txt"), "b");
         write(to.filePath("a.txt"), "old");
-        QCOMPARE(FileOps::clashes({from.filePath("a.txt"), from.filePath("b.txt")}, to.path(), FileOps::Copy),
+        QCOMPARE(FileOps::clashes({from.filePath("a.txt"), from.filePath("b.txt")}, to.path()),
                  QStringList({from.filePath("a.txt")}));
-        QCOMPARE(FileOps::clashes({from.filePath("a.txt")}, from.path(), FileOps::Copy), QStringList());
-        QCOMPARE(FileOps::clashes({from.filePath("a.txt")}, from.path(), FileOps::Move), QStringList());
+        QCOMPARE(FileOps::clashes({from.filePath("a.txt")}, from.path()), QStringList());
+    }
+
+    void fileOpsCopyOntoItselfKeepsBoth()
+    {
+        // Copied into its own folder, an item is kept beside itself, never
+        // asked about, and never replaced by itself, also when the folder
+        // is reached through a link to it, where replacing would send the
+        // original to the trash before copying it.
+        QTemporaryDir data, dir, links;
+        const auto restore = dataHomeAt(data.path());
+        write(dir.filePath("a.txt"), "a");
+        QVERIFY(QFile::link(dir.path(), links.filePath("same")));
+        const QString same = links.filePath("same");
+        QCOMPARE(FileOps::clashes({dir.filePath("a.txt")}, same), QStringList());
+        QString error;
+        QCOMPARE(FileOps::transfer({dir.filePath("a.txt")}, dir.path(), FileOps::Copy, &error),
+                 QStringList({"a (copy).txt"}));
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(FileOps::transfer({dir.filePath("a.txt")}, same, FileOps::Copy, &error,
+                                   {{dir.filePath("a.txt"), FileOps::Replace}}),
+                 QStringList({"a (copy 2).txt"}));
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        // Moved into where it already is, it stays.
+        FileOps::transfer({dir.filePath("a.txt")}, same, FileOps::Move, &error, {{dir.filePath("a.txt"), FileOps::Replace}});
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(contents(dir.filePath("a.txt")), QByteArray("a"));
+        QVERIFY(!QFileInfo::exists(data.filePath("Trash/files/a.txt")));
     }
 
     void fileOpsReplaceSkipOrKeepBoth()
