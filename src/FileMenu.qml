@@ -5,8 +5,8 @@ import QtQuick
 // Rename, Duplicate, Copy, Cut, Paste Into, Copy Path, Compress, Extract
 // Here (for archives), Share (Dropbox link, Taildrop, LocalSend: whichever
 // are available), Pin, Terminal, Delete. On empty space: Undo, Paste, New
-// Folder, Copy Path, Terminal, hidden files. In the trash: Restore, Empty Trash and Delete Permanently,
-// without the entries that change files. On a tailnet machine: Open, and
+// Folder, Copy Path, Terminal, hidden files. In the trash: Restore, Empty
+// Trash and Delete Permanently, without the entries that change files. On a tailnet machine: Open, and
 // nothing for files. Entries show their keys, so the menu also teaches the
 // shortcuts.
 FolioMenu {
@@ -33,6 +33,9 @@ FolioMenu {
     readonly property var apps: forItem && forFiles ? fileOps.appsFor(target.path) : []
     // Open With only when there's something besides what Open already does.
     readonly property bool canOpenWith: apps.length > 1
+    // A file's type only: a folder's default app is the desktop's file
+    // manager, not something to change from one folder's menu.
+    readonly property bool canAlwaysOpenWith: apps.length > 0 && !forFolder
     // A selected item in the folder being shown stands for the whole
     // selection, so Copy, Compress or Delete act on all of it.
     readonly property bool forSelection: forItem && target.selected === true && backend.folder.selectedCount > 1
@@ -54,7 +57,7 @@ FolioMenu {
             const entry = itemAt(i)
             if (entry && entry.subMenu)
                 entry.shown = entry.subMenu === shareMenu ? canShare
-                            : entry.subMenu === alwaysMenu ? apps.length > 0 : canOpenWith
+                            : entry.subMenu === alwaysMenu ? canAlwaysOpenWith : canOpenWith
         }
         if (near)
             popup(near, Math.min(near.width / 2, 120), near.height / 2)
