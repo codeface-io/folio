@@ -66,7 +66,8 @@ ApplicationWindow {
             // What it is, where it sits in the folder, and the way out.
             Rectangle {
                 Layout.fillWidth: true
-                implicitHeight: 60
+                // Grows with larger text; the buttons keep their size.
+                implicitHeight: Math.max(60, heading.implicitHeight + 24)
                 color: theme.background
 
                 RowLayout {
@@ -76,6 +77,7 @@ ApplicationWindow {
                     spacing: 12
 
                     ColumnLayout {
+                        id: heading
                         Layout.fillWidth: true
                         spacing: 2
                         Text {

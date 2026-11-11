@@ -33,8 +33,8 @@ Item {
     // The name always gets room: in a narrow window the date goes first,
     // then the size. (The icon says what kind a file is; there's no column
     // for it.)
-    readonly property bool showDate: detailed && width >= 480
-    readonly property bool showSize: detailed && width >= 380
+    readonly property bool showDate: detailed && width >= theme.scaled(480)
+    readonly property bool showSize: detailed && width >= theme.scaled(380)
 
     readonly property string glyph: row.isDir ? "folder"
                                   : row.kind === "image" ? "pictures"
@@ -108,22 +108,23 @@ Item {
         }
         Text {
             Layout.fillWidth: true
-            Layout.minimumWidth: 120
+            Layout.minimumWidth: theme.scaled(120)
             text: row.name
             color: row.current ? theme.accent : theme.foreground
             elide: Text.ElideMiddle
         }
         Text {
             visible: row.showSize
-            Layout.preferredWidth: 96
+            Layout.preferredWidth: theme.scaled(96)
             horizontalAlignment: Text.AlignRight
             text: row.isDir ? Format.count(row.itemCount) : Format.size(row.size)
             color: theme.secondaryForeground
             font.pixelSize: theme.scaled(12)
+            elide: Text.ElideRight
         }
         Text {
             visible: row.showDate
-            Layout.preferredWidth: 96
+            Layout.preferredWidth: theme.scaled(96)
             Layout.leftMargin: 12
             text: {
                 translator.language // Re-read when the language (and so the default locale) changes.

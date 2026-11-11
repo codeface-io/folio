@@ -19,9 +19,12 @@ ListView {
     onCurrentIndexChanged: selecting.cursorMoved()
     Keys.onPressed: (event) => selecting.extendBy(event, event.key === Qt.Key_Up ? -1 : event.key === Qt.Key_Down ? 1 : 0)
 
+    // Every row is this tall, so the band can find them without asking.
+    readonly property int rowHeight: Math.max(32, theme.scaled(32))
+
     Band {
         view: list
-        rectOf: (i) => Qt.rect(0, i * 32, list.width, 32)
+        rectOf: (i) => Qt.rect(0, i * list.rowHeight, list.width, list.rowHeight)
     }
 
     // → goes into the selected folder and ← back up, as in the columns.
@@ -53,6 +56,7 @@ ListView {
 
     delegate: FileRow {
         width: list.width
+        height: list.rowHeight
         detailed: true
         current: selected
         onClicked: (modifiers) => { selecting.click(index, modifiers); list.forceActiveFocus() }

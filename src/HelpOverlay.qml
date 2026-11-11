@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 
 // Every shortcut, one keypress away (?).
@@ -46,8 +47,10 @@ Rectangle {
 
     Rectangle {
         anchors.centerIn: parent
-        width: Math.min(parent.width - 64, 520)
-        height: content.implicitHeight + 56
+        width: Math.min(parent.width - 64, theme.scaled(520))
+        // As tall as the list, but never past the window: then the list
+        // scrolls under its heading.
+        height: Math.min(parent.height - 64, content.implicitHeight + 56)
         color: theme.background
         border.width: 1
         border.color: theme.accent
@@ -61,20 +64,33 @@ Rectangle {
 
             Text { text: qsTr("Keyboard shortcuts"); color: theme.brightForeground; font.pixelSize: theme.scaled(16); font.weight: Font.DemiBold }
 
-            GridLayout {
-                columns: 2
-                rowSpacing: 10
-                columnSpacing: 28
-                // Each key, then what it does: the grid fills its two
-                // columns in order. (QML's JavaScript has no Array.flat.)
-                Repeater {
-                    model: [].concat(...overlay.shortcuts)
-                    delegate: Text {
-                        required property var modelData
-                        required property int index
-                        Layout.fillWidth: index % 2 === 1
-                        text: modelData
-                        color: index % 2 ? theme.foreground : theme.accent
+            Flickable {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                implicitHeight: keys.implicitHeight
+                contentWidth: width
+                contentHeight: keys.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: FolioScrollBar { }
+
+                GridLayout {
+                    id: keys
+                    width: parent.width
+                    columns: 2
+                    rowSpacing: 10
+                    columnSpacing: 28
+                    // Each key, then what it does: the grid fills its two
+                    // columns in order. (QML's JavaScript has no Array.flat.)
+                    Repeater {
+                        model: [].concat(...overlay.shortcuts)
+                        delegate: Text {
+                            required property var modelData
+                            required property int index
+                            Layout.fillWidth: index % 2 === 1
+                            text: modelData
+                            color: index % 2 ? theme.foreground : theme.accent
+                        }
                     }
                 }
             }
