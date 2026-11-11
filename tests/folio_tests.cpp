@@ -8,6 +8,9 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QProcess>
 #include <QQmlComponent>
 #include <QQmlEngine>
@@ -19,6 +22,7 @@
 #include <QtConcurrent>
 #include <QtTest>
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -26,6 +30,7 @@
 #include "fileops.h"
 #include "foldermodel.h"
 #include "places.h"
+#include "plugins.h"
 #include "previewer.h"
 #include "theme.h"
 #include "thumbnails.h"
@@ -66,6 +71,35 @@ static QByteArray tailnet()
         "c":{"HostName":"Conference-Room","DNSName":"conference-room.example.ts.net.","OS":"macOS","Online":true},
         "d":{"HostName":"phone","DNSName":"phone.example.ts.net.","OS":"android","Online":true},
         "e":{"HostName":"build","DNSName":"build.example.ts.net.","OS":"windows","Online":true}}})";
+}
+
+// Writes a plugin into `folder`: its manifest and, by name, its files,
+// the ones starting with #! executable.
+static void writePlugin(const QString &folder, const QString &id, const QByteArray &manifest,
+                        const QHash<QString, QByteArray> &files = {})
+{
+    QDir(folder).mkpath(id);
+    const QString dir = folder + "/" + id;
+    QHash<QString, QByteArray> all = files;
+    all.insert("manifest.json", manifest);
+    for (auto it = all.begin(); it != all.end(); ++it) {
+        QDir().mkpath(QFileInfo(dir + "/" + it.key()).absolutePath());
+        QFile file(dir + "/" + it.key());
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(it.value());
+        file.close();
+        if (it.value().startsWith("#!"))
+            file.setPermissions(file.permissions() | QFileDevice::ExeOwner);
+    }
+}
+
+// The names of a list of maps, for comparing.
+static QStringList namesOf(const QVariantList &list)
+{
+    QStringList names;
+    for (const QVariant &v : list)
+        names << v.toMap().value("name").toString();
+    return names;
 }
 
 class FolioTests : public QObject {
@@ -1320,11 +1354,11 @@ private slots:
         QTemporaryDir dir;
         const QString uri = QUrl::fromLocalFile(dir.path()).toString();
         auto *closed = new Mounter;
-        closed->mount(uri);
+        closed->mount(uri, false);
         delete closed;
         Mounter open;
         QSignalSpy failed(&open, &Mounter::failed);
-        open.mount(uri);
+        open.mount(uri, false);
         QVERIFY(failed.wait(2000));
         QVERIFY(!open.busy());
     }
@@ -1559,6 +1593,371 @@ private slots:
         QCOMPARE(Backend::mountLabel("sftp:host=studio.example.ts.net,user=me"), QString("studio"));
         QCOMPARE(Backend::mountLabel("sftp:host=files.example.com"), QString("files.example.com"));
         QCOMPARE(Backend::mountLabel("smb-share:server=nas,share=media"), QString("nas"));
+    }
+
+    void pluginsReadTheirManifests()
+    {
+        QString error;
+        const auto manifest = Plugins::parseManifest(R"({
+            "folio": 1, "requires": ["tailscale"], "someday": true,
+            "poll": {"command": ["./machines", "--all"], "every": 2},
+            "section": {"title": "Tailnet", "rows": "opened", "limit": 3},
+            "view": {"title": "Tailnet", "label": "Machines", "icon": "tailnet", "empty": "No machines are online"},
+            "share": [{"id": "taildrop", "label": "Taildrop", "to": "items", "files": true,
+                       "command": ["./send"], "busy": "Sending to %1…"},
+                      {"id": "link", "label": "Link", "command": ["./link"], "under": ["~/Dropbox/"],
+                       "single": true, "detach": true}]})", &error);
+        QVERIFY2(manifest, qPrintable(error));
+        QCOMPARE(manifest->required, QStringList({"tailscale"}));
+        QCOMPARE(manifest->poll, QStringList({"./machines", "--all"}));
+        // Polling more often than every 5 seconds isn't allowed.
+        QCOMPARE(manifest->every, 5);
+        QVERIFY(manifest->section && manifest->opened);
+        QCOMPARE(manifest->sectionTitle, QString("Tailnet"));
+        QCOMPARE(manifest->limit, 3);
+        QVERIFY(manifest->view);
+        QCOMPARE(manifest->viewLabel, QString("Machines"));
+        QCOMPARE(manifest->viewEmpty, QString("No machines are online"));
+        QCOMPARE(manifest->share.size(), 2);
+        QVERIFY(manifest->share[0].toItems && manifest->share[0].files && !manifest->share[0].single);
+        QCOMPARE(manifest->share[0].busy, QString("Sending to %1…"));
+        QCOMPARE(manifest->share[1].under, QStringList({"~/Dropbox/"}));
+        QVERIFY(manifest->share[1].single && manifest->share[1].detach);
+
+        // The defaults: polled every 15 seconds, every item in the section.
+        const auto plain = Plugins::parseManifest(R"({"folio": 1, "poll": {"command": ["./x"]}, "section": {"title": "X"}})", &error);
+        QVERIFY(plain);
+        QCOMPARE(plain->every, 15);
+        QVERIFY(!plain->opened);
+        QCOMPARE(plain->limit, 6);
+
+        // What can't be followed is refused, saying why.
+        for (const char *broken : {"not json", "[]", R"({"requires": []})", R"({"folio": 2})",
+                                   R"({"folio": 1, "poll": {"command": []}})",
+                                   R"({"folio": 1, "poll": {"command": "./x"}})",
+                                   R"({"folio": 1, "requires": "tailscale"})",
+                                   R"({"folio": 1, "section": {"title": "X", "rows": "opened"}})",
+                                   R"({"folio": 1, "section": {"rows": "all"}})",
+                                   R"({"folio": 1, "share": [{"id": "a", "label": "A"}]})",
+                                   R"({"folio": 1, "share": [{"id": "a", "label": "A", "command": ["x"]},
+                                                             {"id": "a", "label": "B", "command": ["y"]}]})"}) {
+            error.clear();
+            QVERIFY2(!Plugins::parseManifest(broken, &error), broken);
+            QVERIFY2(!error.isEmpty(), broken);
+        }
+    }
+
+    void pluginsSkipWhatCantRun()
+    {
+        QTemporaryDir folder;
+        writePlugin(folder.path(), "good", R"({"folio": 1})");
+        writePlugin(folder.path(), "broken", "{");
+        writePlugin(folder.path(), "needs-more", R"({"folio": 1, "requires": ["folio-no-such-program"]})");
+        // Only lowercase letters, digits and dashes make an id.
+        writePlugin(folder.path(), "Not_An_Id", R"({"folio": 1})");
+        QDir(folder.path()).mkpath("no-manifest");
+        QStringList ids;
+        for (const auto &m : Plugins::read({folder.path(), folder.filePath("missing")}, "en"))
+            ids << m.id;
+        QCOMPARE(ids, QStringList({"good"}));
+    }
+
+    void pluginsOfTheUserReplacePackagedOnes()
+    {
+        QTemporaryDir packaged, user;
+        writePlugin(packaged.path(), "dropbox", R"({"folio": 1, "section": {"title": "Packaged"}})");
+        writePlugin(packaged.path(), "tailscale", R"({"folio": 1})");
+        writePlugin(user.path(), "dropbox", R"({"folio": 1, "section": {"title": "Mine"}})");
+        const auto plugins = Plugins::read({packaged.path(), user.path()}, "en");
+        QCOMPARE(plugins.size(), 2);
+        QCOMPARE(plugins[0].id, QString("dropbox"));
+        QCOMPARE(plugins[0].sectionTitle, QString("Mine"));
+        QCOMPARE(plugins[0].dir, user.filePath("dropbox"));
+        QCOMPARE(plugins[1].dir, packaged.filePath("tailscale"));
+    }
+
+    void pluginCommandsRunInTheirFolderAndEndWhole()
+    {
+        QTemporaryDir folder;
+        writePlugin(folder.path(), "slow", R"({"folio": 1})",
+                    {{"where", "#!/bin/sh\necho \"{\\\"dir\\\": \\\"$PWD\\\", \\\"plugin\\\": \\\"$FOLIO_PLUGIN_DIR\\\", "
+                               "\\\"language\\\": \\\"$FOLIO_LANGUAGE\\\", \\\"args\\\": \\\"$*\\\"}\"\n"
+                               "echo 'first' >&2\necho 'last words' >&2\nread line && echo stdin >&2\nexit 3\n"},
+                     {"hang", "#!/bin/sh\nsleep 30 &\necho $! > \"$1\"\nwait\n"}});
+        const auto plugins = Plugins::read({folder.path()}, "da");
+        QCOMPARE(plugins.size(), 1);
+        const auto &plugin = plugins[0];
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert("FOLIO_PLUGIN_DIR", plugin.dir);
+        env.insert("FOLIO_LANGUAGE", "da");
+
+        // In the plugin's folder, with its arguments intact and nothing on
+        // standard input; standard error's last line is kept.
+        const Plugins::Run run = Plugins::execute(plugin, {"./where", "a b"}, env, 5000);
+        QVERIFY(run.started);
+        QCOMPARE(run.code, 3);
+        QVERIFY(!run.ok());
+        const QJsonObject said = QJsonDocument::fromJson(run.out).object();
+        QCOMPARE(QFileInfo(said.value("dir").toString()).canonicalFilePath(), QFileInfo(plugin.dir).canonicalFilePath());
+        QCOMPARE(said.value("plugin").toString(), plugin.dir);
+        QCOMPARE(said.value("language").toString(), QString("da"));
+        QCOMPARE(said.value("args").toString(), QString("a b"));
+        QCOMPARE(run.lastError, QString("last words"));
+
+        // One that takes too long is ended, and so is what it started.
+        const QString pidFile = folder.filePath("child");
+        QElapsedTimer clock;
+        clock.start();
+        const Plugins::Run hung = Plugins::execute(plugin, {"./hang", pidFile}, env, 300);
+        QVERIFY(hung.timedOut);
+        QVERIFY(!hung.ok());
+        QVERIFY(clock.elapsed() < 3000);
+        QFile file(pidFile);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const pid_t child = file.readAll().trimmed().toInt();
+        QVERIFY(child > 0);
+        QTRY_VERIFY(::kill(child, 0) != 0);
+
+        // A program that isn't there never starts.
+        QVERIFY(!Plugins::execute(plugin, {"folio-no-such-program"}, env, 1000).started);
+    }
+
+    void pluginOutputIsReadOrRefused()
+    {
+        const auto output = Plugins::parseOutput(R"({
+            "items": [{"id": "studio.example.ts.net", "name": "studio", "icon": "peer", "subtitle": "Linux",
+                       "details": [ ["Host", "studio.example.ts.net"] ], "open": {"mount": "sftp:\/\/studio.example.ts.net\/"}},
+                      {"id": "no-name"}, {"name": "no id"},
+                      {"id": "studio.example.ts.net", "name": "twice"}],
+            "places": [{"path": "~/Dropbox", "icon": "dropbox.svg", "status": "syncing", "tone": "warning"}, {"status": "no path"}],
+            "share": ["link"]})");
+        QVERIFY(output);
+        // Items without an id or a name, or with an id already listed, are left out.
+        QCOMPARE(output->items.size(), 1);
+        QCOMPARE(output->items[0].name, QString("studio"));
+        QCOMPARE(output->items[0].open.value("mount").toString(), QString("sftp://studio.example.ts.net/"));
+        QCOMPARE(output->places.size(), 1);
+        QCOMPARE(output->places[0].tone, QString("warning"));
+        QCOMPARE(output->share, std::optional<QStringList>(QStringList{"link"}));
+        QVERIFY(!Plugins::parseOutput("{}")->share);
+        QVERIFY(!Plugins::parseOutput("garbage"));
+        QVERIFY(!Plugins::parseOutput("[1, 2]"));
+        QVERIFY(!Plugins::parseOutput(""));
+    }
+
+    void pluginsTranslateWithTheirOwnCatalog()
+    {
+        QTemporaryDir folder;
+        writePlugin(folder.path(), "servers", R"({"folio": 1})",
+                    {{"i18n/pt.json", R"({"Servers": "Servidores", "Sending to %1 failed: %2": "Falha ao enviar para %1: %2"})"},
+                     {"i18n/pt-BR.json", R"({"Servers": "Servidores BR"})"}});
+        const auto plugin = Plugins::read({folder.path()}, "pt-BR").value(0);
+        // The regional catalog first, then the base language's, then English.
+        QCOMPARE(Plugins::text(plugin, QJsonValue("Servers")), QString("Servidores BR"));
+        QCOMPARE(Plugins::text(plugin, QJsonValue("Upload")), QString("Upload"));
+        // A template's values are filled in as they are, even ones that
+        // look like a template's places.
+        QCOMPARE(Plugins::text(plugin, QJsonArray{"Sending to %1 failed: %2", "studio", "no %1 here"}),
+                 QString("Falha ao enviar para studio: no %1 here"));
+        QCOMPARE(Plugins::text(plugin, QJsonArray{"%1 of %2", 3, 7}), QString("3 of 7"));
+    }
+
+    void pluginsFillTheirSectionMarksAndView()
+    {
+        QTemporaryDir folder, home;
+        // Text the plugin prints is translated as it's shown, so a change
+        // of language needs no new poll.
+        writePlugin(folder.path(), "servers", R"({"folio": 1,
+            "poll": {"command": ["./servers"]},
+            "section": {"title": "Servers"},
+            "view": {"title": "All servers", "label": "Everything", "icon": "server.svg", "empty": "No servers"}})",
+                    {{"servers", "#!/bin/sh\necho poll >> polls\ncat <<EOF\n"
+                                 "{\"items\": [{\"id\": \"b\", \"name\": \"beta\", \"icon\": \"server.svg\", \"subtitle\": \"SFTP\","
+                                 " \"details\": [[\"Address\", \"sftp://beta/\"]], \"open\": {\"path\": \"" + home.path().toUtf8() + "\"}},"
+                                 " {\"id\": \"a\", \"name\": \"alpha\", \"icon\": \"missing.svg\", \"open\": {\"mount\": \"sftp://alpha/\"}}],"
+                                 " \"places\": [{\"path\": \"" + home.path().toUtf8() + "/Dropbox\", \"icon\": \"server.svg\", \"status\": [\"%1 left\", 3], \"tone\": \"warning\"}]}\n"
+                                 "EOF\n"},
+                     {"server.svg", "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M4 4h16v16H4z'/></svg>"},
+                     {"i18n/da.json", R"({"Servers": "Servere", "Everything": "Alle", "Address": "Adresse", "%1 left": "%1 tilbage"})"}});
+        // One that hangs and one that prints garbage don't hold up the
+        // others, and show nothing.
+        writePlugin(folder.path(), "hangs", R"({"folio": 1, "poll": {"command": ["sleep", "60"]}, "section": {"title": "Hangs"}})");
+        writePlugin(folder.path(), "garbage", R"({"folio": 1, "poll": {"command": ["./poll"]}, "section": {"title": "Garbage"}})",
+                    {{"poll", "#!/bin/sh\necho 'not json'\n"}});
+
+        Plugins plugins("da", {folder.path()}, home.filePath("folio.conf"));
+        QTRY_COMPARE(plugins.sections().size(), 1);
+        const QVariantMap section = plugins.sections().at(0).toMap();
+        QCOMPARE(section.value("id").toString(), QString("servers"));
+        QCOMPARE(section.value("title").toString(), QString("Servere"));
+        // Every item, in the plugin's order, then the view's row with how
+        // many there are.
+        const QVariantList rows = section.value("rows").toList();
+        QCOMPARE(namesOf(rows), QStringList({"beta", "alpha"}));
+        QCOMPARE(rows[0].toMap().value("path").toString(), QString("plugin:servers/b"));
+        QCOMPARE(rows[0].toMap().value("icon").toString(), folder.filePath("servers/server.svg"));
+        QCOMPARE(rows[1].toMap().value("icon").toString(), QString("file"));
+        // A local folder takes drops and is lit while you're in it; a mount
+        // is lit inside GVfs's folder for it.
+        QCOMPARE(rows[0].toMap().value("folder").toString(), home.path());
+        QCOMPARE(rows[0].toMap().value("root").toString(), home.path());
+        QVERIFY(rows[1].toMap().value("root").toString().endsWith("/gvfs/sftp:host=alpha"));
+        QVERIFY(!rows[0].toMap().value("forgettable").toBool());
+        const QVariantMap viewRow = section.value("view").toMap();
+        QCOMPARE(viewRow.value("name").toString(), QString("Alle"));
+        QCOMPARE(viewRow.value("path").toString(), QString("plugin:servers"));
+        QCOMPARE(viewRow.value("count").toInt(), 2);
+
+        const QVariantMap mark = plugins.marks().value(home.path() + "/Dropbox").toMap();
+        QCOMPARE(mark.value("status").toString(), QString("3 tilbage"));
+        QCOMPARE(mark.value("tone").toString(), QString("warning"));
+        QCOMPARE(mark.value("icon").toString(), folder.filePath("servers/server.svg"));
+
+        QVERIFY(plugins.hasView("plugin:servers"));
+        QVERIFY(!plugins.hasView("plugin:hangs"));
+        const QVariantMap view = plugins.views().value("plugin:servers").toMap();
+        QCOMPARE(view.value("title").toString(), QString("All servers"));
+        QCOMPARE(view.value("empty").toString(), QString("No servers"));
+        const QVariantMap beta = view.value("items").toList().at(0).toMap();
+        QCOMPARE(beta.value("subtitle").toString(), QString("SFTP"));
+        QCOMPARE(beta.value("details").toList().at(0).toList(), QVariantList({"Adresse", "sftp://beta/"}));
+        QCOMPARE(plugins.item("plugin:servers/a")->name, QString("alpha"));
+        QVERIFY(!plugins.item("plugin:servers/nope"));
+        QCOMPARE(plugins.nameForMount(rows[1].toMap().value("root").toString()), QString("alpha"));
+
+        // Switching language changes the text without polling again.
+        QFile polls(folder.filePath("servers/polls"));
+        QVERIFY(polls.open(QIODevice::ReadOnly));
+        const QByteArray before = polls.readAll();
+        polls.close();
+        QSignalSpy changed(&plugins, &Plugins::changed);
+        plugins.setLanguage("en");
+        QTRY_COMPARE(plugins.sections().value(0).toMap().value("title").toString(), QString("Servers"));
+        QVERIFY(polls.open(QIODevice::ReadOnly));
+        QCOMPARE(polls.readAll(), before);
+    }
+
+    void pluginSectionsRememberOpenedItems()
+    {
+        QTemporaryDir folder, home;
+        QByteArray items = "{\"items\": [";
+        for (int i = 0; i < 10; ++i)
+            items += QByteArray(i ? "," : "") + "{\"id\": \"m" + QByteArray::number(i) + "\", \"name\": \"machine" + QByteArray::number(i) + "\"}";
+        items += "]}";
+        writePlugin(folder.path(), "tailscale", R"({"folio": 1, "poll": {"command": ["./machines"]},
+            "section": {"title": "Tailnet", "rows": "opened"}, "view": {"title": "Tailnet", "label": "Machines"}})",
+                    {{"machines", "#!/bin/sh\ncat <<'EOF'\n" + items + "\nEOF\n"}});
+        // What older versions remembered of the tailnet carries over.
+        const QString conf = home.filePath("folio.conf");
+        {
+            QSettings settings(conf, QSettings::IniFormat);
+            settings.beginWriteArray("opened-machines", 2);
+            settings.setArrayIndex(0);
+            settings.setValue("host", "m3");
+            settings.setValue("when", "2026-11-01T10:00:00");
+            settings.setArrayIndex(1);
+            settings.setValue("host", "gone");
+            settings.setValue("when", "2026-11-01T09:00:00");
+            settings.endArray();
+        }
+        Plugins plugins("en", {folder.path()}, conf);
+        QCOMPARE(plugins.opened("tailscale"), QStringList({"m3", "gone"}));
+        QVERIFY(!QSettings(conf, QSettings::IniFormat).contains("opened-machines/size"));
+
+        // Only the opened ones that are among the items show, most recent
+        // first, each with a ✕, then the row for the view.
+        auto rows = [&] { return plugins.sections().value(0).toMap().value("rows").toList(); };
+        QTRY_COMPARE(namesOf(rows()), QStringList({"machine3"}));
+        QVERIFY(rows()[0].toMap().value("forgettable").toBool());
+        QCOMPARE(plugins.sections().value(0).toMap().value("view").toMap().value("count").toInt(), 10);
+        plugins.remember("plugin:tailscale/m1");
+        plugins.remember("plugin:tailscale/m3");
+        QCOMPARE(namesOf(rows()), QStringList({"machine3", "machine1"}));
+        // A handful at most.
+        for (int i = 0; i < 10; ++i)
+            plugins.remember(QString("plugin:tailscale/m%1").arg(i));
+        QCOMPARE(namesOf(rows()), QStringList({"machine9", "machine8", "machine7", "machine6", "machine5", "machine4"}));
+        plugins.forget("tailscale", "m9");
+        QCOMPARE(namesOf(rows()).first(), QString("machine8"));
+        // Kept in the settings, the 20 most recent.
+        for (int i = 0; i < 25; ++i)
+            plugins.remember(QString("plugin:tailscale/x%1").arg(i));
+        QCOMPARE(plugins.opened("tailscale").size(), 20);
+        QCOMPARE(Plugins("en", {folder.filePath("none")}, conf).opened("tailscale").first(), QString("x24"));
+        QCOMPARE(rows().size(), 0);
+
+        // When the plugin goes away, its section goes but its ids stay.
+        plugins.remember("plugin:tailscale/m2");
+        QFile::remove(folder.filePath("tailscale/manifest.json"));
+        plugins.refresh();
+        QTRY_COMPARE(plugins.sections().size(), 0);
+        QCOMPARE(plugins.opened("tailscale").first(), QString("m2"));
+    }
+
+    void pluginShareEntriesFollowTheirConditions()
+    {
+        QTemporaryDir folder, files;
+        QDir(files.path()).mkpath("Dropbox/folder");
+        write(files.filePath("Dropbox/a.txt"), "a");
+        write(files.filePath("Dropbox/b.txt"), "b");
+        write(files.filePath("c.txt"), "c");
+        const QString under = files.path() + "/Dropbox/";
+        writePlugin(folder.path(), "zeta", R"({"folio": 1, "poll": {"command": ["./poll"]},
+            "share": [{"id": "send", "label": "Send", "to": "items", "files": true, "command": ["./send"], "busy": "Sending to %1…"}]})",
+                    {{"poll", "#!/bin/sh\necho '{\"items\": [{\"id\": \"s.example\", \"name\": \"studio\"}]}'\n"},
+                     {"send", "#!/bin/sh\nprintf '%s|' \"$FOLIO_TARGET\" \"$FOLIO_TARGET_NAME\" \"$@\" > sent\n"
+                              "echo '{\"notice\": [\"Sent to %1.\", \"'\"$FOLIO_TARGET_NAME\"'\"]}'\n"}});
+        writePlugin(folder.path(), "alpha", "{\"folio\": 1, \"poll\": {\"command\": [\"./poll\"]}, \"share\": ["
+                                            "{\"id\": \"link\", \"label\": \"Link\", \"under\": [\"" + under.toUtf8() + "\"], \"single\": true, \"command\": [\"./link\"]},"
+                                            "{\"id\": \"off\", \"label\": \"Off\", \"command\": [\"./link\"]}]}",
+                    {{"poll", "#!/bin/sh\necho '{\"share\": [\"link\"]}'\n"},
+                     {"link", "#!/bin/sh\necho \"no link for $1\" >&2\nexit 1\n"}});
+        writePlugin(folder.path(), "beta", R"({"folio": 1, "share": [{"id": "copy", "label": "Copy It", "command": ["./copy"]}]})",
+                    {{"copy", "#!/bin/sh\necho '{\"copy\": \"https://example.com/x\", \"error\": [\"%1 is too big\", \"x\"]}'\n"}});
+
+        Plugins plugins("en", {folder.path()}, files.filePath("folio.conf"));
+        auto labels = [&](const QStringList &paths) {
+            QStringList list;
+            for (const QVariant &v : plugins.shareFor(paths))
+                list << v.toMap().value("label").toString();
+            return list;
+        };
+        // Entries wait for their plugin's poll, and only those it names show.
+        QTRY_COMPARE(labels({files.filePath("Dropbox/a.txt")}), QStringList({"Link", "Copy It", "Send"}));
+        // Plain entries first, by plugin id, then submenus with their targets.
+        const QVariantMap send = plugins.shareFor({files.filePath("c.txt")}).last().toMap();
+        QCOMPARE(send.value("targets").toList().at(0).toMap().value("name").toString(), QString("studio"));
+        QCOMPARE(labels({files.filePath("c.txt")}), QStringList({"Copy It", "Send"}));
+        QCOMPARE(labels({files.filePath("Dropbox/a.txt"), files.filePath("Dropbox/b.txt")}), QStringList({"Copy It", "Send"}));
+        QCOMPARE(labels({files.filePath("Dropbox/folder")}), QStringList({"Link", "Copy It"}));
+        QCOMPARE(labels({files.path() + "/Dropbox"}), QStringList({"Copy It"}));
+
+        // An entry gets the paths as arguments and the target in its
+        // environment, and says what to do when it's done.
+        std::optional<Plugins::Result> result;
+        const QString busy = plugins.share("zeta", "send", {files.filePath("c.txt"), files.filePath("Dropbox/a.txt")},
+                                           "s.example", [&](const Plugins::Result &r) { result = r; });
+        QCOMPARE(busy, QString("Sending to studio…"));
+        QTRY_VERIFY(result);
+        QCOMPARE(result->notice, QString("Sent to studio."));
+        QVERIFY(result->error.isEmpty());
+        QFile sent(folder.filePath("zeta/sent"));
+        QVERIFY(sent.open(QIODevice::ReadOnly));
+        QCOMPARE(QString::fromUtf8(sent.readAll()),
+                 "s.example|studio|" + files.filePath("c.txt") + "|" + files.filePath("Dropbox/a.txt") + "|");
+
+        // A failure without an error of its own shows its last word on
+        // standard error after the entry's label.
+        result.reset();
+        plugins.share("alpha", "link", {files.filePath("Dropbox/a.txt")}, {}, [&](const Plugins::Result &r) { result = r; });
+        QTRY_VERIFY(result);
+        QCOMPARE(result->error, "Link: no link for " + files.filePath("Dropbox/a.txt"));
+        // An error printed is a failure even with a zero exit.
+        result.reset();
+        plugins.share("beta", "copy", {files.filePath("c.txt")}, {}, [&](const Plugins::Result &r) { result = r; });
+        QTRY_VERIFY(result);
+        QCOMPARE(result->error, QString("x is too big"));
+        QCOMPARE(result->copy, QString("https://example.com/x"));
     }
 
     void placesListOnlyPhysicalDrives()

@@ -1,6 +1,8 @@
 #include "mounter.h"
 
 #include <QPointer>
+#include <QUrl>
+#include <unistd.h>
 
 // GIO's headers use `signals` as a struct member, which Qt defines as a
 // keyword.
@@ -15,14 +17,21 @@ struct MounterCallbacks {
 
     // GVfs's SFTP backend asks two questions, about a host seen for the
     // first time and about a host whose key differs from the key for its IP
-    // address, and both list "Log In Anyway" first. A tailnet machine is
-    // reached over WireGuard and already authenticated by Tailscale, so the
-    // answer is always yes. A changed key for a known machine never gets
-    // here: ssh refuses it outright.
-    static void question(GMountOperation *op, const char *, const char **, gpointer) {
+    // address, and both list "Log In Anyway" first. A verified machine (one
+    // on a tailnet, reached over WireGuard and already authenticated by
+    // Tailscale) gets yes. Anything else gets no, and the question becomes
+    // the reason the mount failed. A changed key for a known machine never
+    // gets here: ssh refuses it outright.
+    static void question(GMountOperation *op, const char *message, const char **, gpointer data) {
         g_signal_stop_emission_by_name(op, "ask-question");
-        g_mount_operation_set_choice(op, 0);
-        g_mount_operation_reply(op, G_MOUNT_OPERATION_HANDLED);
+        auto *self = static_cast<Mounter *>(data);
+        if (self->m_verified) {
+            g_mount_operation_set_choice(op, 0);
+            g_mount_operation_reply(op, G_MOUNT_OPERATION_HANDLED);
+            return;
+        }
+        self->m_declined = QString::fromUtf8(message).section('\n', 0, 0).trimmed();
+        g_mount_operation_reply(op, G_MOUNT_OPERATION_ABORTED);
     }
 
     static void password(GMountOperation *op, const char *message, const char *user, const char *,
@@ -59,7 +68,7 @@ struct MounterCallbacks {
                     emit self->mounted(local);
             } else {
                 const bool cancelled = error && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_FAILED_HANDLED);
-                const QString message = cancelled ? QString() : QString::fromUtf8(error ? error->message : "");
+                const QString message = cancelled ? self->m_declined : QString::fromUtf8(error ? error->message : "");
                 self->finish();
                 emit self->failed(message);
             }
@@ -79,9 +88,22 @@ Mounter::~Mounter() {
     finish();
 }
 
-void Mounter::mount(const QString &uri) {
+QString Mounter::root() {
+    return QStringLiteral("/run/user/%1/gvfs").arg(getuid());
+}
+
+QString Mounter::folderFor(const QString &url) {
+    const QUrl parsed(url);
+    if (parsed.scheme() != "sftp" || parsed.host().isEmpty())
+        return {};
+    return root() + "/sftp:host=" + parsed.host() + (parsed.userName().isEmpty() ? QString() : ",user=" + parsed.userName());
+}
+
+void Mounter::mount(const QString &uri, bool verified) {
     if (m_operation)
         return;
+    m_verified = verified;
+    m_declined.clear();
     GFile *file = g_file_new_for_uri(uri.toUtf8().constData());
     m_operation = g_mount_operation_new();
     g_signal_connect(m_operation, "ask-question", G_CALLBACK(MounterCallbacks::question), this);

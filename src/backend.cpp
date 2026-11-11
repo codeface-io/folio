@@ -54,7 +54,7 @@ Backend::Backend(const QString &home, QObject *parent)
 }
 
 QString Backend::gvfsRoot() {
-    return QStringLiteral("/run/user/%1/gvfs").arg(getuid());
+    return Mounter::root();
 }
 
 // What a gvfs mount is called on screen: the host or server from its
@@ -214,7 +214,7 @@ void Backend::openPeer(const QString &host) {
     // any other folder.
     m_mountHost = host;
     setBusy(tr("Connecting to %1…").arg(host));
-    m_mounter.mount("sftp://" + host + "/");
+    m_mounter.mount("sftp://" + host + "/", true);
 }
 
 void Backend::showNotice(const QString &notice) {

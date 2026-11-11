@@ -25,6 +25,12 @@ public:
     QString translate(const char *context, const char *sourceText, const char *disambiguation = nullptr,
                       int n = -1) const override;
 
+    // The strings for `language` from the catalogs in `directory`: English
+    // first, then the base language and the regional one over it (pt, then
+    // pt-BR), so a missing string falls back toward English one step at a
+    // time. Plugins' catalogs are read the same way.
+    static QHash<QString, QJsonValue> catalog(const QString &directory, const QString &language);
+
 signals:
     void changed();
 
