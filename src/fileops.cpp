@@ -1,4 +1,5 @@
 #include "fileops.h"
+#include "foldermodel.h"
 
 #include <QClipboard>
 #include <QDir>
@@ -596,7 +597,12 @@ void FileOps::transferInBackground(const QStringList &paths, const QString &fold
     // last answer starts it.
     const QStringList clashing = clashes(paths, folder, mode);
     if (!clashing.isEmpty()) {
-        m_pending = Pending{paths, folder, mode, releaseClipboard, clashing, {}};
+        Pending pending{{}, {}, [=, this](const QHash<QString, Choice> &choices) {
+                            startTransfer(paths, folder, mode, releaseClipboard, choices);
+                        }};
+        for (const QString &path : clashing)
+            pending.clashing << std::pair{path, folder};
+        m_pending = std::move(pending);
         emit clashChanged();
         return;
     }
@@ -606,11 +612,11 @@ void FileOps::transferInBackground(const QStringList &paths, const QString &fold
 QVariantMap FileOps::clash() const {
     if (!m_pending)
         return {};
-    const QString path = m_pending->clashing.at(m_pending->choices.size());
-    const QString there = QDir(m_pending->folder).filePath(QFileInfo(path).fileName());
-    const QString folder = QFileInfo(m_pending->folder).fileName();
+    const auto &[path, into] = m_pending->clashing.at(m_pending->choices.size());
+    const QString there = QDir(into).filePath(QFileInfo(path).fileName());
+    const QString folder = QFileInfo(into).fileName();
     return {{"name", QFileInfo(path).fileName()},
-            {"folder", folder.isEmpty() ? m_pending->folder : folder},
+            {"folder", folder.isEmpty() ? into : folder},
             {"merge", isFolder(path) && isFolder(there)},
             {"others", m_pending->clashing.size() - m_pending->choices.size() - 1}};
 }
@@ -621,7 +627,7 @@ void FileOps::answerClash(const QString &choice, bool forAll) {
     Pending &pending = *m_pending;
     const Choice answer = choice == "replace" ? Replace : choice == "skip" ? Skip : KeepBoth;
     do
-        pending.choices.insert(pending.clashing.at(pending.choices.size()), answer);
+        pending.choices.insert(pending.clashing.at(pending.choices.size()).first, answer);
     while (forAll && pending.choices.size() < pending.clashing.size());
     if (pending.choices.size() < pending.clashing.size()) {
         emit clashChanged();
@@ -630,7 +636,7 @@ void FileOps::answerClash(const QString &choice, bool forAll) {
     const Pending ready = std::move(pending);
     m_pending.reset();
     emit clashChanged();
-    startTransfer(ready.paths, ready.folder, ready.mode, ready.releaseClipboard, ready.choices);
+    ready.then(ready.choices);
 }
 
 void FileOps::dropClash() {
@@ -781,6 +787,193 @@ void FileOps::compress(const QStringList &selected) {
         return;
     process->setReadChannel(QProcess::StandardError);
     connect(process, &QProcess::readyReadStandardError, this, [process, read] { read(process); });
+}
+
+bool FileOps::canExtract(const QStringList &paths) const {
+    // A lone compressed file (notes.txt.gz) is no archive to bsdtar.
+    static const QStringList single{"application/gzip", "application/x-xz", "application/zstd"};
+    for (const QString &path : paths) {
+        const QFileInfo info(path);
+        const QString mime = QMimeDatabase().mimeTypeForFile(info).name();
+        if (info.isDir() || FolderModel::kindForMime(mime) != "archive" || single.contains(mime))
+            return false;
+    }
+    return !paths.isEmpty();
+}
+
+// Why bsdtar couldn't extract `name`, from what it said.
+static QString whyNot(const QString &name, const QString &said) {
+    if (said.contains("passphrase", Qt::CaseInsensitive) || said.contains("encrypt", Qt::CaseInsensitive))
+        return FileOps::tr("Couldn't extract %1: it's protected by a password.").arg(name);
+    if (said.contains("Path contains '..'") || said.contains("through symlink"))
+        return FileOps::tr("Couldn't extract %1: it would put files outside its folder.").arg(name);
+    return FileOps::tr("Couldn't extract %1: it's damaged, or isn't an archive Folio can read.").arg(name);
+}
+
+// Unpacks `archive` into a folder named after it in `into`. bsdtar runs as a
+// program of its own, so an archive made to crash it can't take Folio along,
+// and a cancel can stop it. Returns what goes beside the archive: the one
+// item it held, or the folder holding its several. Empty when stopped, or
+// with `error` saying why it couldn't.
+static QString unpack(const QString &archive, const QString &into, FileOps::Job &job, bool countEntries,
+                      QString *error) {
+    const QString name = QFileInfo(archive).fileName();
+    const int dot = FileOps::extensionStart(name, false);
+    const QString folder = QDir(into).filePath(dot > 0 ? name.left(dot) : name);
+    QDir().mkdir(folder);
+    QProcess bsdtar;
+    bsdtar.setProcessChannelMode(QProcess::MergedChannels);
+    // bsdtar refuses absolute paths, "..", and writing through a link, unless
+    // told otherwise (-P), which it never is here. Owners and the setuid,
+    // setgid and sticky bits aren't restored, as for any user but root; that
+    // holds even when Folio runs as root. A password is given, so an
+    // encrypted archive is refused as one, rather than having bsdtar ask on
+    // a terminal there isn't, forever. Mac archives' __MACOSX folder holds
+    // nothing but Finder's notes, and would make one item look like two.
+    bsdtar.start("bsdtar", {"-x", "-v", "--no-same-owner", "--no-same-permissions", "--passphrase", "folio",
+                            "--exclude", "__MACOSX", "-f", archive, "-C", folder});
+    if (!bsdtar.waitForStarted()) {
+        *error = FileOps::tr("Extracting needs bsdtar, from the libarchive package.");
+        return {};
+    }
+    // -v names each item as it's made ("x name"), which counts them. What
+    // went wrong with one follows its name ("x name: why"); only the why is
+    // kept, so a name can't be taken for a reason.
+    QByteArray said;
+    const auto read = [&] {
+        while (bsdtar.canReadLine()) {
+            const QByteArray line = bsdtar.readLine();
+            if (!line.startsWith("x "))
+                said += line;
+            else if (const qsizetype why = line.indexOf(": "); why >= 0)
+                said += line.mid(why);
+            if (countEntries && line.startsWith("x "))
+                ++job.done;
+        }
+    };
+    while (!bsdtar.waitForFinished(100) && bsdtar.state() != QProcess::NotRunning) {
+        read();
+        if (job.cancelled) {
+            bsdtar.kill();
+            bsdtar.waitForFinished();
+            return {};
+        }
+    }
+    read();
+    if (bsdtar.exitStatus() != QProcess::NormalExit || bsdtar.exitCode() != 0) {
+        *error = whyNot(name, QString::fromUtf8(said + bsdtar.readAll()));
+        return {};
+    }
+    const QStringList items = QDir(folder).entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+    if (items.isEmpty()) {
+        *error = FileOps::tr("There's nothing in %1 to extract.").arg(name);
+        return {};
+    }
+    return items.size() == 1 ? QDir(folder).filePath(items.first()) : folder;
+}
+
+void FileOps::extract(const QStringList &archives) {
+    if (archives.isEmpty() || !idle())
+        return;
+    // Each archive is unpacked into a hidden folder of its own beside it, so
+    // what's half made stays out of sight and goes with that folder when
+    // it's stopped or fails. Only what's finished is moved out, which on the
+    // same drive is a rename.
+    QList<std::shared_ptr<QTemporaryDir>> hidden;
+    QStringList into;
+    for (const QString &archive : archives) {
+        const QFileInfo info(archive);
+        auto temporary = std::make_shared<QTemporaryDir>(info.absoluteDir().filePath(".extracting-XXXXXX"));
+        if (!temporary->isValid()) {
+            emit failed(tr("Couldn't extract %1: %2").arg(info.fileName(), temporary->errorString()));
+            return;
+        }
+        hidden << temporary;
+        into << temporary->path();
+    }
+    const QString name = QFileInfo(archives.first()).fileName();
+    const int count = archives.size();
+    inBackground(
+        [name, count](const Job &job) {
+            if (count > 1)
+                return counting(job, tr("Extracting %1 of %n archives…", "", job.total),
+                                tr("Extracting %n archives…", "", count));
+            return job.done > 0 ? tr("Extracting %1: %n items…", "", job.done).arg(name) : tr("Extracting %1…").arg(name);
+        },
+        [archives, into](Job &job) {
+            // Several archives count themselves; one counts what's in it.
+            Outcome result;
+            const bool one = archives.size() == 1;
+            job.total = one ? 0 : archives.size();
+            for (qsizetype i = 0; i < archives.size() && !job.cancelled; ++i) {
+                QString error;
+                result.made << unpack(archives[i], into[i], job, one, &error);
+                if (!error.isEmpty())
+                    result.failures << error;
+                if (!one)
+                    ++job.done;
+            }
+            return result;
+        },
+        [this, archives, hidden, name, count](const Outcome &result, const Job &job) {
+            if (job.cancelled) {
+                for (const auto &folder : hidden)
+                    folder->remove();
+                emit notice(count == 1 ? tr("Stopped extracting %1; nothing was extracted.").arg(name)
+                                       : tr("Stopped extracting; nothing was extracted."));
+                return;
+            }
+            if (!result.failures.isEmpty())
+                emit failed(result.failures.join(' '));
+            // What each archive gave goes in beside it, a name that's taken
+            // asked about first, as a paste's is.
+            QList<std::pair<QString, QString>> items, clashing;
+            QStringList from;
+            for (qsizetype i = 0; i < result.made.size(); ++i) {
+                if (result.made[i].isEmpty())
+                    continue;
+                const QFileInfo archive(archives[i]);
+                items << std::pair{result.made[i], archive.absolutePath()};
+                from << archive.fileName();
+                if (taken(archive.absoluteDir().filePath(QFileInfo(result.made[i]).fileName())))
+                    clashing << items.last();
+            }
+            // The hidden folders go once what's in them is placed, with
+            // whatever was skipped, or once the clash is dropped.
+            const auto place = [this, items, from, hidden](const QHash<QString, Choice> &choices) {
+                QList<Step> steps;
+                QString error, folder, made;
+                for (const auto &[item, into] : items) {
+                    const QStringList names = transfer({item}, into, Move, &error, choices, nullptr, &steps);
+                    if (made.isEmpty() && !names.isEmpty()) {
+                        folder = into;
+                        made = names.first();
+                    }
+                    if (!error.isEmpty())
+                        break;
+                }
+                // Moved out of its hidden folder, what was extracted is new
+                // where it is now: undo sends it to the trash, as it does a
+                // copy.
+                for (Step &step : steps)
+                    if (!step.trash)
+                        step = Step{true, step.path, {}};
+                for (const auto &folder : hidden)
+                    folder->remove();
+                if (!steps.isEmpty())
+                    remember({Extracting, from.first(), int(from.size()), steps});
+                if (!error.isEmpty())
+                    emit failed(error);
+                if (!made.isEmpty())
+                    emit done(folder, made);
+            };
+            if (clashing.isEmpty()) {
+                place({});
+                return;
+            }
+            m_pending = Pending{clashing, {}, place};
+            emit clashChanged();
+        });
 }
 
 void FileOps::shareLocalSend(const QStringList &paths) {
@@ -1241,6 +1434,7 @@ QString FileOps::undoName() const {
     case Duplicating: return tr("Undo Duplicate");
     case MakingFolder: return tr("Undo New Folder");
     case Compressing: return tr("Undo Compress");
+    case Extracting: return tr("Undo Extract");
     case Trashing: return tr("Undo Delete");
     }
     return {};
@@ -1264,6 +1458,11 @@ static QString didMessage(const FileOps::Change &change, bool undoing) {
     case FileOps::Compressing:
         return undoing ? FileOps::tr("Undid compressing into %1.").arg(name)
                        : FileOps::tr("Redid compressing into %1.").arg(name);
+    case FileOps::Extracting:
+        if (n > 1)
+            return undoing ? FileOps::tr("Undid extracting %n archives.", "", n)
+                           : FileOps::tr("Redid extracting %n archives.", "", n);
+        return undoing ? FileOps::tr("Undid extracting %1.").arg(name) : FileOps::tr("Redid extracting %1.").arg(name);
     case FileOps::Trashing:
         return undoing ? FileOps::tr("Undid moving %n items to the trash.", "", n)
                        : FileOps::tr("Redid moving %n items to the trash.", "", n);

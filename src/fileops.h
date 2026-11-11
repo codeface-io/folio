@@ -53,7 +53,7 @@ public:
         QString path, other;
     };
     // What undo names: the kind of change, and the item or how many.
-    enum Kind { Renaming, Moving, Copying, Duplicating, MakingFolder, Compressing, Trashing };
+    enum Kind { Renaming, Moving, Copying, Duplicating, MakingFolder, Compressing, Extracting, Trashing };
     struct Change {
         Kind kind;
         QString name;
@@ -85,6 +85,12 @@ public:
     Q_INVOKABLE void duplicate(const QString &path);
     // Packs the items into a .zip beside them (bsdtar, from libarchive).
     Q_INVOKABLE void compress(const QStringList &paths);
+    // Whether these are all archives bsdtar can unpack (zip, tar and its
+    // compressed forms, 7z, rar, iso).
+    Q_INVOKABLE bool canExtract(const QStringList &paths) const;
+    // Unpacks each archive beside itself: an archive of one item gives
+    // that item, one of several a folder named after the archive.
+    Q_INVOKABLE void extract(const QStringList &paths);
     // Sends with LocalSend to a nearby device, or with Taildrop to a
     // machine on the tailnet.
     Q_INVOKABLE void shareLocalSend(const QStringList &paths);
@@ -246,14 +252,13 @@ private:
     std::shared_ptr<Job> m_job;
     QProcess *m_process = nullptr;
     bool m_killed = false;
-    // A transfer waiting on answers about the names it would take.
+    // Work waiting on answers about the names it would take: each item
+    // whose name is taken, with the folder it's going into, and what
+    // carries on once the last answer is in.
     struct Pending {
-        QStringList paths;
-        QString folder;
-        Mode mode;
-        bool releaseClipboard;
-        QStringList clashing;
+        QList<std::pair<QString, QString>> clashing;
         QHash<QString, Choice> choices;
+        std::function<void(const QHash<QString, Choice> &)> then;
     };
     std::optional<Pending> m_pending;
 };

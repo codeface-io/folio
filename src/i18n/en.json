@@ -25,5 +25,10 @@
   "Redid copying %n items.": { "one": "Redid copying %n item.", "other": "Redid copying %n items." },
   "Undid moving %n items to the trash.": { "one": "Undid moving %n item to the trash.", "other": "Undid moving %n items to the trash." },
   "Redid moving %n items to the trash.": { "one": "Redid moving %n item to the trash.", "other": "Redid moving %n items to the trash." },
-  "Do this for the other %n clashes": { "one": "Do this for the other clash", "other": "Do this for the other %n clashes" }
+  "Do this for the other %n clashes": { "one": "Do this for the other clash", "other": "Do this for the other %n clashes" },
+  "Extracting %1 of %n archives…": { "one": "Extracting %1 of %n archive…", "other": "Extracting %1 of %n archives…" },
+  "Extracting %n archives…": { "one": "Extracting %n archive…", "other": "Extracting %n archives…" },
+  "Extracting %1: %n items…": { "one": "Extracting %1: %n item…", "other": "Extracting %1: %n items…" },
+  "Undid extracting %n archives.": { "one": "Undid extracting %n archive.", "other": "Undid extracting %n archives." },
+  "Redid extracting %n archives.": { "one": "Redid extracting %n archive.", "other": "Redid extracting %n archives." }
 }

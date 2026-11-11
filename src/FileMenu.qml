@@ -2,8 +2,8 @@ import QtQuick
 
 // The right-click menu. On an item: Open, Open With (each app that can),
 // Preview, Rename, Duplicate, Copy, Cut, Paste Into, Copy Path, Compress,
-// Share (Dropbox link, Taildrop, LocalSend: whichever are available), Pin,
-// Terminal, Delete. On empty space: Undo, Paste, New Folder, Copy Path,
+// Extract Here (for archives), Share (Dropbox link, Taildrop, LocalSend:
+// whichever are available), Pin, Terminal, Delete. On empty space: Undo, Paste, New Folder, Copy Path,
 // Terminal, hidden files. In the trash: Restore, Empty Trash and Delete Permanently,
 // without the entries that change files. On a tailnet machine: Open, and
 // nothing for files. Entries show their keys, so the menu also teaches the
@@ -151,6 +151,11 @@ FolioMenu {
         shown: !fileMenu.trashView && fileMenu.forItem && fileMenu.forFiles
         text: qsTr("Compress")
         onTriggered: fileOps.compress(fileMenu.paths)
+    }
+    FolioMenuItem {
+        shown: !fileMenu.trashView && fileMenu.forItem && fileMenu.forFiles && fileOps.canExtract(fileMenu.paths)
+        text: qsTr("Extract Here")
+        onTriggered: fileOps.extract(fileMenu.paths)
     }
     // Share offers only what this machine has: a Dropbox link for things in
     // the Dropbox folder (while Dropbox runs), Taildrop to the online

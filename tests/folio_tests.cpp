@@ -1522,6 +1522,220 @@ private slots:
         QCOMPARE(ops.undoName(), QString("Undo Rename"));
     }
 
+    void extractOneItemBesideTheArchive()
+    {
+        // An archive holding one folder (or file) puts it beside the
+        // archive, under its own name; nothing else is left behind.
+        if (QStandardPaths::findExecutable("bsdtar").isEmpty())
+            QSKIP("Extracting needs bsdtar.");
+        QTemporaryDir dir, source;
+        QDir(source.path()).mkpath("album/sub");
+        write(source.filePath("album/a.jpg"), "a");
+        write(source.filePath("album/sub/b.jpg"), "b");
+        pack(dir.filePath("photos.tar.gz"), source.path(), {"album"});
+        FileOps ops;
+        QVERIFY(ops.canExtract({dir.filePath("photos.tar.gz")}));
+        QSignalSpy done(&ops, &FileOps::done), failed(&ops, &FileOps::failed);
+        ops.extract({dir.filePath("photos.tar.gz")});
+        QVERIFY(done.wait(5000));
+        QCOMPARE(done.first(), QList<QVariant>({dir.path(), "album"}));
+        QCOMPARE(failed.count(), 0);
+        QCOMPARE(contents(dir.filePath("album/a.jpg")), QByteArray("a"));
+        QCOMPARE(contents(dir.filePath("album/sub/b.jpg")), QByteArray("b"));
+        QCOMPARE(everything(dir.path()), QStringList({"album", "photos.tar.gz"}));
+    }
+
+    void extractManyItemsIntoAFolder()
+    {
+        // Several items go into a new folder named after the archive,
+        // without its extensions, so they don't spill over the folder.
+        if (QStandardPaths::findExecutable("bsdtar").isEmpty())
+            QSKIP("Extracting needs bsdtar.");
+        QTemporaryDir dir, source;
+        write(source.filePath("a.txt"), "a");
+        write(source.filePath("b.txt"), "b");
+        pack(dir.filePath("notes.tar.xz"), source.path(), {"a.txt", "b.txt"});
+        pack(dir.filePath("more.zip"), source.path(), {"a.txt", "b.txt"});
+        FileOps ops;
+        QSignalSpy done(&ops, &FileOps::done);
+        ops.extract({dir.filePath("notes.tar.xz"), dir.filePath("more.zip")});
+        QVERIFY(done.wait(5000));
+        QCOMPARE(done.first(), QList<QVariant>({dir.path(), "notes"}));
+        QCOMPARE(contents(dir.filePath("notes/a.txt")), QByteArray("a"));
+        QCOMPARE(contents(dir.filePath("notes/b.txt")), QByteArray("b"));
+        QCOMPARE(contents(dir.filePath("more/b.txt")), QByteArray("b"));
+        QCOMPARE(everything(dir.path()), QStringList({"more", "more.zip", "notes", "notes.tar.xz"}));
+        // Only archives are offered: not a lone compressed file, nor a
+        // folder.
+        write(dir.filePath("single.txt.gz"), "x");
+        QVERIFY(ops.canExtract({dir.filePath("notes.tar.xz"), dir.filePath("more.zip")}));
+        QVERIFY(!ops.canExtract({dir.filePath("notes.tar.xz"), dir.filePath("single.txt.gz")}));
+        QVERIFY(!ops.canExtract({dir.filePath("notes")}));
+        QVERIFY(!ops.canExtract({}));
+    }
+
+    void extractAsksWhenTheNameIsTaken()
+    {
+        // The name that would appear is asked about like a paste's, Keep
+        // Both first; cancelling leaves nothing, not even the hidden
+        // extraction.
+        if (QStandardPaths::findExecutable("bsdtar").isEmpty())
+            QSKIP("Extracting needs bsdtar.");
+        QTemporaryDir data, dir, source;
+        const auto restore = dataHomeAt(data.path());
+        write(source.filePath("a.txt"), "new");
+        write(source.filePath("b.txt"), "new");
+        pack(dir.filePath("notes.zip"), source.path(), {"a.txt", "b.txt"});
+        QDir(dir.path()).mkdir("notes");
+        write(dir.filePath("notes/a.txt"), "old");
+        FileOps ops;
+        QSignalSpy done(&ops, &FileOps::done), clash(&ops, &FileOps::clashChanged);
+        ops.extract({dir.filePath("notes.zip")});
+        QVERIFY(clash.wait(5000));
+        QCOMPARE(ops.clash().value("name").toString(), QString("notes"));
+        QCOMPARE(ops.clash().value("merge").toBool(), true);
+        ops.dropClash();
+        QTRY_COMPARE(everything(dir.path()), QStringList({"notes", "notes.zip"}));
+        QCOMPARE(everything(dir.filePath("notes")), QStringList({"a.txt"}));
+
+        ops.extract({dir.filePath("notes.zip")});
+        QVERIFY(clash.wait(5000));
+        ops.answerClash("both", false);
+        QCOMPARE(done.count(), 1);
+        QCOMPARE(done.first(), QList<QVariant>({dir.path(), "notes (copy)"}));
+        QCOMPARE(contents(dir.filePath("notes (copy)/a.txt")), QByteArray("new"));
+        QCOMPARE(contents(dir.filePath("notes/a.txt")), QByteArray("old"));
+
+        // Merged, what's replaced inside goes to the trash.
+        ops.extract({dir.filePath("notes.zip")});
+        QVERIFY(clash.wait(5000));
+        ops.answerClash("replace", false);
+        QCOMPARE(contents(dir.filePath("notes/a.txt")), QByteArray("new"));
+        QCOMPARE(contents(dir.filePath("notes/b.txt")), QByteArray("new"));
+        QCOMPARE(contents(data.filePath("Trash/files/a.txt")), QByteArray("old"));
+        QCOMPARE(everything(dir.path()), QStringList({"notes", "notes (copy)", "notes.zip"}));
+    }
+
+    void extractRefusesWhatWouldLandOutside()
+    {
+        // bsdtar refuses ".." and links leading out, and an archive with
+        // either is extracted not at all: nothing escapes, and nothing is
+        // left half-made.
+        if (QStandardPaths::findExecutable("bsdtar").isEmpty())
+            QSKIP("Extracting needs bsdtar.");
+        QTemporaryDir outer;
+        QDir(outer.path()).mkpath("dir");
+        QDir(outer.path()).mkpath("target");
+        const QString dir = outer.filePath("dir");
+        write(outer.filePath("f"), "evil");
+        const auto mtree = [&](const QString &archive, const QByteArray &spec) {
+            write(outer.filePath("spec"), "#mtree\n" + spec);
+            QProcess tar;
+            tar.start("bsdtar", {"-cf", archive, "@" + outer.filePath("spec")});
+            QVERIFY(tar.waitForFinished() && tar.exitCode() == 0);
+        };
+        const QByteArray f = QFile::encodeName(outer.filePath("f"));
+        mtree(dir + "/dots.tar", "./ok.txt type=file contents=" + f + "\n../evil.txt type=file contents=" + f + "\n");
+        mtree(dir + "/link.tar", "./l type=link link=" + QFile::encodeName(outer.filePath("target"))
+                                     + "\n./l/evil.txt type=file contents=" + f + "\n");
+        FileOps ops;
+        QSignalSpy failed(&ops, &FileOps::failed);
+        ops.extract({dir + "/dots.tar"});
+        QVERIFY(failed.wait(5000));
+        QCOMPARE(failed.last().first().toString(), QString("Couldn't extract dots.tar: it would put files outside its folder."));
+        QTRY_VERIFY(ops.busy().isEmpty());
+        ops.extract({dir + "/link.tar"});
+        QVERIFY(failed.wait(5000));
+        QCOMPARE(failed.last().first().toString(), QString("Couldn't extract link.tar: it would put files outside its folder."));
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QCOMPARE(everything(outer.path()), QStringList({"dir", "f", "spec", "target"}));
+        QCOMPARE(everything(dir), QStringList({"dots.tar", "link.tar"}));
+        QCOMPARE(everything(outer.filePath("target")), QStringList());
+    }
+
+    void extractSaysWhenItCant()
+    {
+        // A password, or a damaged archive, is said as such.
+        if (QStandardPaths::findExecutable("bsdtar").isEmpty())
+            QSKIP("Extracting needs bsdtar.");
+        QTemporaryDir dir;
+        write(dir.filePath("secret.txt"), "secret");
+        QProcess tar;
+        tar.start("bsdtar", {"--options", "zip:encryption=zipcrypt", "--passphrase", "x", "-acf",
+                             dir.filePath("locked.zip"), "-C", dir.path(), "secret.txt"});
+        QVERIFY(tar.waitForFinished() && tar.exitCode() == 0);
+        QFile::remove(dir.filePath("secret.txt"));
+        write(dir.filePath("broken.zip"), QByteArray(300, 'x'));
+        FileOps ops;
+        QSignalSpy failed(&ops, &FileOps::failed);
+        ops.extract({dir.filePath("locked.zip"), dir.filePath("broken.zip")});
+        QVERIFY(failed.wait(5000));
+        QCOMPARE(failed.first().first().toString(),
+                 QString("Couldn't extract locked.zip: it's protected by a password. "
+                         "Couldn't extract broken.zip: it's damaged, or isn't an archive Folio can read."));
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QCOMPARE(everything(dir.path()), QStringList({"broken.zip", "locked.zip"}));
+    }
+
+    void extractCancelLeavesNothing()
+    {
+        // Cancel stops bsdtar partway, and what it had made goes with it.
+        // Reading the archive from a pipe keeps it partway for as long as
+        // the test likes.
+        if (QStandardPaths::findExecutable("bsdtar").isEmpty())
+            QSKIP("Extracting needs bsdtar.");
+        QTemporaryDir dir, source;
+        write(source.filePath("a.txt"), QByteArray(4096, 'a'));
+        write(source.filePath("b.txt"), QByteArray(1 << 20, 'b'));
+        pack(source.filePath("whole.tar"), source.path(), {"a.txt", "b.txt"});
+        const QByteArray archive = contents(source.filePath("whole.tar"));
+        const QByteArray pipe = QFile::encodeName(dir.filePath("slow.tar"));
+        QVERIFY(mkfifo(pipe.constData(), 0600) == 0);
+        FileOps ops;
+        QSignalSpy notice(&ops, &FileOps::notice);
+        ops.extract({dir.filePath("slow.tar")});
+        int writer = -1;
+        QVERIFY(QTest::qWaitFor([&] { return (writer = open(pipe.constData(), O_WRONLY | O_NONBLOCK)) >= 0; }));
+        // The first file whole, and some of the second: bsdtar reads ahead,
+        // so it takes more than the first file to see it through.
+        fcntl(writer, F_SETFL, 0);
+        QCOMPARE(::write(writer, archive.constData(), 256 << 10), 256 << 10);
+        QTRY_VERIFY(ops.busy().contains("1"));
+        ops.cancel();
+        close(writer);
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QCOMPARE(notice.count(), 1);
+        QCOMPARE(notice.first().first().toString(), QString("Stopped extracting slow.tar; nothing was extracted."));
+        QCOMPARE(everything(dir.path()), QStringList({"slow.tar"}));
+    }
+
+    void undoAndRedoExtract()
+    {
+        // Undo sends what was extracted to the trash; redo brings it back.
+        if (QStandardPaths::findExecutable("bsdtar").isEmpty())
+            QSKIP("Extracting needs bsdtar.");
+        QTemporaryDir data, dir, source;
+        const auto restore = dataHomeAt(data.path());
+        FileOps::forgetHistory();
+        write(source.filePath("a.txt"), "a");
+        write(source.filePath("b.txt"), "b");
+        pack(dir.filePath("notes.zip"), source.path(), {"a.txt", "b.txt"});
+        FileOps ops;
+        QSignalSpy done(&ops, &FileOps::done), notice(&ops, &FileOps::notice);
+        ops.extract({dir.filePath("notes.zip")});
+        QVERIFY(done.wait(5000));
+        QCOMPARE(ops.undoName(), QString("Undo Extract"));
+        ops.undo();
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QCOMPARE(everything(dir.path()), QStringList({"notes.zip"}));
+        QCOMPARE(contents(data.filePath("Trash/files/notes/a.txt")), QByteArray("a"));
+        QCOMPARE(notice.last().first().toString(), QString("Undid extracting notes.zip."));
+        ops.redo();
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QCOMPARE(contents(dir.filePath("notes/b.txt")), QByteArray("b"));
+        QCOMPARE(notice.last().first().toString(), QString("Redid extracting notes.zip."));
+    }
+
     void kindsFromMimeTypes()
     {
         QCOMPARE(FolderModel::kindForMime("application/pdf"), QString("pdf"));
@@ -2327,6 +2541,20 @@ private slots:
     }
 
 private:
+    // Packs `items`, from `folder`, into `archive`, its kind from its name.
+    static void pack(const QString &archive, const QString &folder, const QStringList &items)
+    {
+        QProcess tar;
+        tar.start("bsdtar", QStringList{"-acf", archive, "-C", folder} + items);
+        QVERIFY(tar.waitForFinished() && tar.exitCode() == 0);
+    }
+
+    // Everything in a folder, the hidden too, by name.
+    static QStringList everything(const QString &folder)
+    {
+        return QDir(folder).entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDir::Name);
+    }
+
     static QByteArray contents(const QString &path)
     {
         QFile file(path);
