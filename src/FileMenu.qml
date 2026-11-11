@@ -212,12 +212,20 @@ FolioMenu {
         onTriggered: backend.folder.showHidden = !backend.folder.showHidden
     }
     MenuLine { shown: fileMenu.forItem && fileMenu.forFiles }
-    // Delete moves to the trash; Restore in any file manager brings it back.
+    // Moving to the trash and deleting for good are two things: Delete
+    // moves to the trash, where Restore in any file manager brings it back,
+    // and Shift+Delete deletes for good, after asking. In the trash there's
+    // only the second.
+    FolioMenuItem {
+        shown: fileMenu.forItem && fileMenu.forFiles && !fileMenu.trashView
+        text: fileMenu.forSelection ? qsTr("Move %n Items to the Trash", "", fileMenu.paths.length) : qsTr("Move to the Trash")
+        keys: "Delete"
+        onTriggered: fileOps.trash(fileMenu.paths)
+    }
     FolioMenuItem {
         shown: fileMenu.forItem && fileMenu.forFiles
-        text: fileMenu.trashView ? qsTr("Delete Permanently…")
-            : fileMenu.forSelection ? qsTr("Delete %n Items", "", fileMenu.paths.length) : qsTr("Delete")
-        keys: "Delete"
-        onTriggered: fileMenu.trashView ? fileMenu.deleteRequested(fileMenu.paths) : fileOps.trash(fileMenu.paths)
+        text: qsTr("Delete Permanently…")
+        keys: fileMenu.trashView ? "Delete" : "Shift+Delete"
+        onTriggered: fileMenu.deleteRequested(fileMenu.paths)
     }
 }

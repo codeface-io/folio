@@ -319,6 +319,28 @@ private slots:
         QCOMPARE(model.get(0).value("path").toString(), b.filePath("report.txt"));
     }
 
+    void fileOpsDeleteForeverOutsideTheTrash()
+    {
+        // Shift+Delete deletes for good anywhere: the folder and what's in
+        // it are gone, a link goes without what it points at, and nothing
+        // lands in the trash.
+        QTemporaryDir dir, data;
+        const auto restore = dataHomeAt(data.path());
+        QDir(dir.path()).mkpath("album/inner");
+        write(dir.filePath("album/inner/a.jpg"), "picture");
+        write(dir.filePath("kept.txt"), "kept");
+        QVERIFY(QFile::link(dir.filePath("kept.txt"), dir.filePath("link")));
+        FileOps ops;
+        QSignalSpy failed(&ops, &FileOps::failed);
+        ops.deleteForever({dir.filePath("album"), dir.filePath("link")});
+        QTRY_VERIFY(ops.busy().isEmpty());
+        QCOMPARE(failed.count(), 0);
+        QVERIFY(!QFileInfo::exists(dir.filePath("album")));
+        QVERIFY(!QFileInfo(dir.filePath("link")).isSymLink());
+        QVERIFY(QFile::exists(dir.filePath("kept.txt")));
+        QVERIFY(!QFileInfo::exists(data.filePath("Trash/files/album")));
+    }
+
     void fileOpsNeverOverwrite()
     {
         QTemporaryDir dir;
