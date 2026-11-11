@@ -116,11 +116,12 @@ public:
     // and a submenu has `targets`: [{id, name}...].
     Q_INVOKABLE QVariantList shareFor(const QStringList &paths) const;
     // Runs a share entry on the paths (sent to the item `target` for a
-    // submenu), or an item's run command, then hands `done` what it asks
-    // for. Returns what the status bar says meanwhile.
+    // submenu), then hands `done` what it asks for. Returns what the status
+    // bar says meanwhile.
     QString share(const QString &plugin, const QString &entry, const QStringList &paths, const QString &target,
                   const Done &done);
-    QString run(const QString &itemPath, const Done &done);
+    // Runs an item's run command, the same way.
+    void run(const QString &itemPath, const Done &done);
 
     // The item a plugin:<id>/<item> path names, if its plugin lists it.
     std::optional<Item> item(const QString &itemPath) const;

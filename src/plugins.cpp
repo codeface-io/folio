@@ -625,16 +625,14 @@ QString Plugins::share(const QString &plugin, const QString &entry, const QStrin
     return share->busy.isEmpty() ? QString() : text(*m, QJsonArray{share->busy, name});
 }
 
-QString Plugins::run(const QString &itemPath, const Done &done) {
+void Plugins::run(const QString &itemPath, const Done &done) {
     const Manifest *m = manifest(split(itemPath).first);
     const auto found = item(itemPath);
     const auto command = found ? commandOf(found->open.value("run")) : std::nullopt;
-    if (!m || !command) {
+    if (!m || !command)
         finish(done, {});
-        return {};
-    }
-    act(*m, itemPath, found->name, *command, environment(*m), false, done);
-    return {};
+    else
+        act(*m, itemPath, found->name, *command, environment(*m), false, done);
 }
 
 void Plugins::finish(const Done &done, const Result &result) {
