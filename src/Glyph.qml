@@ -1,9 +1,11 @@
 import QtQuick
 import QtQuick.Shapes
+import QtQuick.Window
 
 // One family of line icons, drawn on a 24-unit grid with the same stroke and
 // square ends, so places, toolbar and tiles all match. Strokes stay crisp at
-// any size because the path is scaled, not the stroke.
+// any size because the path is scaled, not the stroke. A plugin's own icon
+// (the path of an SVG in its folder) is drawn by its shape in the same color.
 Item {
     id: glyph
 
@@ -13,6 +15,7 @@ Item {
     property real stroke: 1.6
     // Brand marks are solid shapes rather than line drawings.
     readonly property bool filled: name === "dropbox"
+    readonly property bool picture: name.endsWith(".svg")
 
     implicitWidth: size
     implicitHeight: size
@@ -89,8 +92,16 @@ Item {
         }
     }
 
+    Image {
+        anchors.fill: parent
+        visible: glyph.picture
+        source: glyph.picture ? "image://plugin-icon/" + String(glyph.color).slice(-6) + "/" + encodeURIComponent(glyph.name) : ""
+        sourceSize: Qt.size(glyph.size * Screen.devicePixelRatio, glyph.size * Screen.devicePixelRatio)
+    }
+
     Shape {
         anchors.fill: parent
+        visible: !glyph.picture
         preferredRendererType: Shape.CurveRenderer
 
         ShapePath {

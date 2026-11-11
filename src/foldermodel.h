@@ -32,6 +32,8 @@ class FolderModel : public QAbstractListModel {
     // The online tailnet machines (as Places::parseTailscale gives them),
     // which the tailnet view lists.
     Q_PROPERTY(QVariantList peers READ peers WRITE setPeers NOTIFY peersChanged)
+    // The items a plugin's view lists, as Plugins::views gives them.
+    Q_PROPERTY(QVariantList items READ items WRITE setItems NOTIFY itemsChanged)
 
 public:
     enum Role {
@@ -45,6 +47,7 @@ public:
         ExtensionRole,
         ItemCountRole,
         SelectedRole,
+        IconRole,
     };
 
     struct Entry {
@@ -55,8 +58,11 @@ public:
         QDateTime modified;
         QString kind;
         QString mime;
-        // A file's extension; a tailnet machine's operating system.
+        // A file's extension; a plugin item's subtitle.
         QString extension;
+        // A plugin item's glyph and its rows for the details pane.
+        QString icon;
+        QVariantList details;
         int itemCount = -1;
         // The first pictures in a folder, for the preview window.
         QStringList peek;
@@ -81,6 +87,8 @@ public:
     void setQuery(const QString &query);
     QVariantList peers() const { return m_peers; }
     void setPeers(const QVariantList &peers);
+    QVariantList items() const { return m_items; }
+    void setItems(const QVariantList &items);
 
     void setPath(const QString &path);
     Q_INVOKABLE void reload();
@@ -128,8 +136,13 @@ public:
     // The machines among `peers` whose names contain `query` (ignoring
     // case), or all of them, by name.
     static QVector<Entry> listPeers(const QVariantList &peers, const QString &query = {});
-    // Recents and the tailnet: lists of their own, not folders.
-    static bool isView(const QString &path) { return path == recentPath() || path == tailnetPath(); }
+    // A plugin's view: plugin:<id>, listing `items` in the plugin's order,
+    // each an item of the "item" kind at plugin:<id>/<item id>. The ones
+    // whose names contain `query` (ignoring case), or all of them.
+    static bool isPluginView(const QString &path) { return path.startsWith("plugin:") && !path.contains('/'); }
+    static QVector<Entry> listItems(const QVariantList &items, const QString &query = {});
+    // Recents, the tailnet and plugins' views: lists of their own, not folders.
+    static bool isView(const QString &path) { return path == recentPath() || path == tailnetPath() || isPluginView(path); }
     static QString kindForMime(const QString &mime);
     // Everything under `root` whose name contains `query` (ignoring case),
     // named by its path from `root`. Stops at `limit` matches, at other
@@ -146,6 +159,7 @@ signals:
     void sortModeChanged();
     void queryChanged();
     void peersChanged();
+    void itemsChanged();
     void selectionChanged();
     void loaded();
 
@@ -169,6 +183,7 @@ private:
     QString m_sort = "name";
     QString m_query;
     QVariantList m_peers;
+    QVariantList m_items;
     quint64 m_generation = 0;
     // The newest listing's generation, shared with the background listing,
     // search and folder counts, so work that's been overtaken (more typing,

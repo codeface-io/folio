@@ -15,6 +15,7 @@
 #include "filemanager1.h"
 #include "foldermodel.h"
 #include "places.h"
+#include "plugins.h"
 #include "previewer.h"
 #include "theme.h"
 #include "thumbnails.h"
@@ -129,6 +130,9 @@ int main(int argc, char *argv[]) {
     Theme theme;
     Places places;
     Thumbnails thumbnails;
+    // Plugins' text follows the language too.
+    Plugins plugins(translator.language());
+    QObject::connect(&translator, &Translator::changed, &plugins, [&] { plugins.setLanguage(translator.language()); });
 
     QString select;
     const QString start = startPath(app.arguments(), &select);
@@ -136,13 +140,15 @@ int main(int argc, char *argv[]) {
     QQmlEngine engine;
     QObject::connect(&translator, &Translator::changed, &engine, &QQmlEngine::retranslate);
     engine.addImageProvider("thumb", new ThumbnailProvider(&thumbnails));
+    engine.addImageProvider("plugin-icon", new PluginIconProvider);
     // Creatable too: the column view lists each folder on the way here.
     qmlRegisterType<FolderModel>("Folio", 1, 0, "FolderModel");
     engine.rootContext()->setContextProperty("translator", &translator);
     engine.rootContext()->setContextProperty("theme", &theme);
     engine.rootContext()->setContextProperty("places", &places);
+    engine.rootContext()->setContextProperty("plugins", &plugins);
 
-    Windows windows(&engine);
+    Windows windows(&engine, &plugins);
     if (!windows.open(start, select))
         return 1;
     FileManager1::registerOn(&windows);

@@ -2,8 +2,9 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// Home's folders, pinned folders, views, drives and tailnet machines. The one holding the current folder
-// stays lit while you dig into it, so you always know which root you're under.
+// Home's folders, pinned folders, views, drives, tailnet machines and
+// plugins' sections. The one holding the current folder stays lit while you
+// dig into it, so you always know which root you're under.
 Rectangle {
     id: sidebar
 
@@ -27,19 +28,36 @@ Rectangle {
     readonly property bool dragging: drop.containsDrag || dropHovers > 0 || pinDrop.containsDrag
     // The tailnet's last row opens the view of every machine on it.
     readonly property var allMachines: places.peers.length > 0 ? [{ path: "tailnet:" }] : []
+    // Each plugin section's rows, then the row for its view.
+    function sectionRows(section) { return section.view ? section.rows.concat([section.view]) : section.rows }
+    readonly property var pluginRows: plugins.sections.reduce((all, section) => all.concat(sectionRows(section)), [])
     readonly property var rows: [].concat(places.places, places.pinned, places.views, places.devices, places.machines,
-                                          allMachines)
+                                          allMachines, pluginRows)
     readonly property int pinnedAt: places.places.length
     readonly property int viewsAt: pinnedAt + places.pinned.length
     readonly property int devicesAt: viewsAt + places.views.length
     readonly property int peersAt: devicesAt + places.devices.length
+    readonly property int pluginsAt: peersAt + places.machines.length + allMachines.length
+    // Where a plugin section's rows start in `rows`.
+    function sectionAt(index) {
+        let at = pluginsAt
+        for (let i = 0; i < index; ++i)
+            at += sectionRows(plugins.sections[i]).length
+        return at
+    }
+    // A plugin's row is lit anywhere inside what it opens.
+    function inside(root) {
+        const here = sidebar.target.path
+        return root.length > 0 && (here === root || here.startsWith(root + "/"))
+    }
 
     function focusSidebar() {
         // Start on the row for where we are (a machine's for anywhere on
         // it), or the top.
         let at = 0
         for (let i = 0; i < rows.length; ++i)
-            if (rows[i].host !== undefined ? onMachine(rows[i].host) : rows[i].path === activePath)
+            if (rows[i].host !== undefined ? onMachine(rows[i].host)
+                : rows[i].root !== undefined ? inside(rows[i].root) : rows[i].path === activePath)
                 at = i
         cursor = at
         forceActiveFocus()
@@ -50,6 +68,8 @@ Rectangle {
             return
         if (row.host !== undefined)
             sidebar.target.openPeer(row.host)
+        else if (row.root !== undefined)
+            sidebar.target.open(row.path)
         else
             sidebar.target.navigate(row.path)
         finished()
@@ -74,7 +94,8 @@ Rectangle {
     readonly property string activePath: {
         let best = ""
         const here = sidebar.target.path
-        for (const list of [places.places, places.pinned, places.views, places.devices, allMachines]) {
+        for (const list of [places.places, places.pinned, places.views, places.devices, allMachines,
+                            plugins.sections.filter(section => section.view).map(section => section.view)]) {
             for (const p of list) {
                 if (p.path !== "/" && (here === p.path || here.startsWith(p.path + "/")) && p.path.length > best.length)
                     best = p.path
@@ -112,6 +133,9 @@ Rectangle {
         readonly property bool dropHover: rowDrop.containsDrag
         property string status
         property color statusColor
+        // What a plugin says about this folder: a status, and an icon of
+        // its own.
+        readonly property var mark: dropPath.length > 0 ? plugins.marks[dropPath] : undefined
 
         Layout.fillWidth: true
         implicitHeight: 34
@@ -146,14 +170,21 @@ Rectangle {
         }
         contentItem: RowLayout {
             spacing: 14
-            Glyph { name: row.glyph; color: row.active ? theme.brightForeground : theme.foreground }
+            Glyph { name: row.mark && row.mark.icon ? row.mark.icon : row.glyph; color: row.active ? theme.brightForeground : theme.foreground }
             Text {
                 Layout.fillWidth: true
                 text: row.text
                 elide: Text.ElideRight
                 color: row.active ? theme.brightForeground : theme.foreground
             }
-            Text { visible: row.status.length > 0; text: row.status; color: row.statusColor; font.pixelSize: 11 }
+            Text {
+                readonly property string said: row.mark ? row.mark.status : row.status
+                visible: said.length > 0
+                text: said
+                color: !row.mark ? row.statusColor : row.mark.tone === "error" ? theme.red
+                     : row.mark.tone === "warning" ? theme.yellow : theme.secondaryForeground
+                font.pixelSize: 11
+            }
         }
     }
 
@@ -355,6 +386,64 @@ Rectangle {
                 }
                 statusColor: theme.secondaryForeground
                 onClicked: sidebar.target.navigate("tailnet:")
+            }
+
+            // Plugins' sections: their items, or the ones opened lately,
+            // then the row for the view of them all.
+            Repeater {
+                model: plugins.sections
+                ColumnLayout {
+                    id: section
+                    required property var modelData
+                    required property int index
+                    readonly property int at: sidebar.sectionAt(index)
+                    Layout.fillWidth: true
+                    spacing: 1
+                    SectionLabel { text: section.modelData.title }
+                    Repeater {
+                        model: section.modelData.rows
+                        PlaceRow {
+                            id: itemRow
+                            required property var modelData
+                            required property int index
+                            dropPath: modelData.folder
+                            onDropHoverChanged: sidebar.dropHovers += dropHover ? 1 : -1
+                            keyed: sidebar.activeFocus && sidebar.cursor === section.at + index
+                            onKeyedChanged: if (keyed) sidebar.reveal(this)
+                            text: modelData.name
+                            glyph: modelData.icon
+                            active: sidebar.inside(modelData.root)
+                            onClicked: sidebar.target.open(modelData.path)
+                            rightPadding: forgetItem.visible ? forgetItem.implicitWidth + 6 : 14
+                            IconButton {
+                                id: forgetItem
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                implicitWidth: 28
+                                implicitHeight: 28
+                                visible: itemRow.modelData.forgettable && (itemRow.hovered || hovered)
+                                glyph: "close"
+                                text: qsTr("Remove from the sidebar")
+                                onClicked: plugins.forget(itemRow.modelData.plugin, itemRow.modelData.id)
+                            }
+                        }
+                    }
+                    PlaceRow {
+                        visible: !!section.modelData.view
+                        keyed: sidebar.activeFocus && sidebar.cursor === section.at + section.modelData.rows.length
+                        onKeyedChanged: if (keyed) sidebar.reveal(this)
+                        text: section.modelData.view ? section.modelData.view.name : ""
+                        glyph: section.modelData.view ? section.modelData.view.icon : ""
+                        active: sidebar.activePath === (section.modelData.view ? section.modelData.view.path : "")
+                        // How many there are, quietly, in the language's digits.
+                        status: {
+                            translator.language // Re-read when the language (and so its digits) changes.
+                            return section.modelData.view ? section.modelData.view.count.toLocaleString(Qt.locale(), "f", 0) : ""
+                        }
+                        statusColor: theme.secondaryForeground
+                        onClicked: sidebar.target.navigate(section.modelData.view.path)
+                    }
+                }
             }
         }
     }

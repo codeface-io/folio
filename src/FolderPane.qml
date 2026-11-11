@@ -65,20 +65,22 @@ FocusScope {
     }
     // An open preview stays on the selected item, followed once the
     // folder's loaded has put the cursor back on it: a re-read leaves
-    // another item on the cursor's row for a moment. A tailnet machine
-    // isn't a file: the preview keeps what it showed last.
+    // another item on the cursor's row for a moment. A plugin's item isn't
+    // a file: the preview keeps what it showed last.
     onCurrentChanged: Qt.callLater(follow)
-    function follow() { if (backend.previewing && current.path && current.kind !== "peer") backend.followSelection(current.path) }
+    function follow() { if (backend.previewing && current.path && current.kind !== "item") backend.followSelection(current.path) }
 
     // In the trash, Delete means for good (after asking), and there's
     // Restore and Empty Trash. Nothing is renamed or made there: an item
     // without its note (or under another name) can't be restored.
     readonly property bool inTrash: fileOps.inTrash(backend.path)
-    // The tailnet view lists machines, not files: there's nothing to copy,
-    // move, rename, make, pin or preview there, only machines to open.
-    readonly property bool inTailnet: backend.path === "tailnet:"
-    readonly property bool fileKeys: keys && !inTailnet
+    // The tailnet view and plugins' views list items, not files: there's
+    // nothing to copy, move, rename, make, pin or preview there, only items
+    // to open.
+    readonly property bool inView: backend.path === "tailnet:" || backend.path.startsWith("plugin:")
+    readonly property bool fileKeys: keys && !inView
     Binding { target: backend.folder; property: "peers"; value: places.peers }
+    Binding { target: backend.folder; property: "items"; value: (plugins.views[backend.path] || {}).items || [] }
     function deleteSelected() {
         const paths = pane.selectedPaths()
         if (pane.inTrash)
@@ -157,7 +159,7 @@ FocusScope {
     Shortcut { sequences: ["Ctrl+L", "Alt+D"]; enabled: pane.keys; onActivated: pathBar.editPath() }
     // Pins the selected folder, or the folder being shown when a file is
     // selected; pressed again, unpins it.
-    Shortcut { sequence: "Ctrl+D"; enabled: pane.active && !pane.inTailnet; onActivated: pane.togglePin(pane.current.isDir ? pane.current.path : backend.path) }
+    Shortcut { sequence: "Ctrl+D"; enabled: pane.active && !pane.inView; onActivated: pane.togglePin(pane.current.isDir ? pane.current.path : backend.path) }
     Shortcut { sequence: "Ctrl+1"; enabled: pane.active; onActivated: pane.viewMode = "grid" }
     Shortcut { sequence: "Ctrl+2"; enabled: pane.active; onActivated: pane.viewMode = "list" }
     Shortcut { sequence: "Ctrl+3"; enabled: pane.active; onActivated: pane.viewMode = "columns" }
@@ -173,7 +175,7 @@ FocusScope {
     // S steps through the sort orders, Shift+S back.
     Shortcut { sequence: "S"; enabled: pane.keys; onActivated: pathBar.stepSort(1) }
     Shortcut { sequence: "Shift+S"; enabled: pane.keys; onActivated: pathBar.stepSort(-1) }
-    Shortcut { sequences: ["F5", "Refresh"]; enabled: pane.active; onActivated: { backend.folder.reload(); places.refresh() } }
+    Shortcut { sequences: ["F5", "Refresh"]; enabled: pane.active; onActivated: { backend.folder.reload(); places.refresh(); plugins.refresh() } }
 
     Connections {
         target: backend

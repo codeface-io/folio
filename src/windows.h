@@ -6,6 +6,7 @@
 
 class Backend;
 class FileOps;
+class Plugins;
 class QQmlContext;
 class QQmlEngine;
 
@@ -18,7 +19,7 @@ class Windows : public QObject {
     Q_OBJECT
 
 public:
-    explicit Windows(QQmlEngine *engine, QObject *parent = nullptr);
+    explicit Windows(QQmlEngine *engine, Plugins *plugins, QObject *parent = nullptr);
 
     // Opens a window on a folder, or on a file's folder with it selected.
     // Null if the interface failed to load (the errors are on stderr).
@@ -52,6 +53,7 @@ private:
     void close(QObject *window);
 
     QQmlEngine *m_engine;
+    Plugins *m_plugins;
     QQmlComponent m_component;
     QQmlComponent m_pane;
     // Most recently used first.

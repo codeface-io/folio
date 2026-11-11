@@ -5,8 +5,8 @@ import "Format.js" as Format
 
 // One item in the grid: a preview on top, its name below. Folders are a
 // quiet card; files show a real thumbnail when one
-// can be made, and a drawn stand-in for their kind when not; tailnet
-// machines are a computer.
+// can be made, and a drawn stand-in for their kind when not; a plugin's
+// items are their icon.
 Item {
     id: tile
 
@@ -19,6 +19,7 @@ Item {
     required property string mime
     required property string extension
     required property int itemCount
+    required property string icon
     required property var size
     required property var modified
     required property bool selected
@@ -60,7 +61,7 @@ Item {
 
             Loader {
                 anchors.fill: parent
-                sourceComponent: tile.isDir ? folderArt : tile.kind === "peer" ? peerArt : fileArt
+                sourceComponent: tile.isDir ? folderArt : tile.kind === "item" ? itemArt : fileArt
             }
 
             // A folder takes files dropped on it, lighting up while they hover.
@@ -92,8 +93,8 @@ Item {
     }
 
     // Size and when, quietly, under the name: "28.0 KB · 2:14 PM" today,
-    // "28.0 KB · 11/9/26" before; just the item count for a folder, the system
-    // for a machine.
+    // "28.0 KB · 11/9/26" before; just the item count for a folder, the
+    // subtitle for a plugin's item.
     Text {
         anchors.top: label.bottom
         anchors.topMargin: 3
@@ -101,7 +102,7 @@ Item {
         width: parent.width - 28
         text: {
             translator.language // Re-read when the language (and so the default locale) changes.
-            if (tile.kind === "peer")
+            if (tile.kind === "item")
                 return tile.extension
             const size = tile.isDir ? Format.count(tile.itemCount) : Format.size(tile.size)
             // A folder's own date says little (it changes when anything in
@@ -128,10 +129,10 @@ Item {
     Drag.supportedActions: Qt.CopyAction | Qt.LinkAction
     Drag.hotSpot.x: tile.width / 2
     Drag.hotSpot.y: 40
-    // A machine isn't a file to hand anywhere.
+    // A plugin's item isn't a file to hand anywhere.
     DragHandler {
         target: null
-        enabled: tile.kind !== "peer"
+        enabled: tile.kind !== "item"
         // Dragging a selected item takes the whole selection along. The list
         // is built as the drag starts, not again on every change of selection.
         onActiveChanged: {
@@ -267,13 +268,13 @@ Item {
     }
 
     Component {
-        id: peerArt
+        id: itemArt
 
         Item {
             Glyph {
                 id: computer
                 anchors.centerIn: parent
-                name: "peer"
+                name: tile.icon
                 size: 76
                 stroke: 1.2
                 color: tile.current ? theme.accent : theme.foreground

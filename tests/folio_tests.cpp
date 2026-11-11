@@ -1515,7 +1515,8 @@ private slots:
         // whatever their case.
         QCOMPARE(names, QStringList({"build", "Conference-Room", "studio"}));
         const auto &build = entries.at(0);
-        QCOMPARE(build.kind, QString("peer"));
+        QCOMPARE(build.kind, QString("item"));
+        QCOMPARE(build.icon, QString("peer"));
         QCOMPARE(build.path, FolderModel::tailnetPath() + "build.example.ts.net");
         QCOMPARE(build.extension, QString("Windows"));
         QVERIFY(!build.isDir);
@@ -1958,6 +1959,56 @@ private slots:
         QTRY_VERIFY(result);
         QCOMPARE(result->error, QString("x is too big"));
         QCOMPARE(result->copy, QString("https://example.com/x"));
+    }
+
+    void pluginViewsListTheirItems()
+    {
+        QTemporaryDir folder, home;
+        writePlugin(folder.path(), "servers", R"({"folio": 1, "poll": {"command": ["./servers"]},
+            "view": {"title": "Servers", "label": "All", "icon": "drive"}})",
+                    {{"servers", "#!/bin/sh\ncat <<EOF\n{\"items\": ["
+                                 "{\"id\": \"z\", \"name\": \"zulu\", \"subtitle\": \"SMB\", \"icon\": \"drive\", \"open\": {\"path\": \"" + home.path().toUtf8() + "\"}},"
+                                 "{\"id\": \"a/b\", \"name\": \"alpha\", \"details\": [[\"Host\", \"alpha.example\"]]}]}\nEOF\n"}});
+        Plugins plugins("en", {folder.path()}, home.filePath("folio.conf"));
+        QTRY_VERIFY(plugins.hasView("plugin:servers"));
+        QTRY_COMPARE(plugins.views().value("plugin:servers").toMap().value("items").toList().size(), 2);
+
+        // In the plugin's order, not sorted; / searches the names.
+        FolderModel model;
+        QSignalSpy loaded(&model, &FolderModel::loaded);
+        model.setItems(plugins.views().value("plugin:servers").toMap().value("items").toList());
+        model.setPath("plugin:servers");
+        QVERIFY(loaded.wait(3000));
+        QCOMPARE(model.count(), 2);
+        const QVariantMap zulu = model.get(0);
+        QCOMPARE(zulu.value("name").toString(), QString("zulu"));
+        QCOMPARE(zulu.value("kind").toString(), QString("item"));
+        QCOMPARE(zulu.value("path").toString(), QString("plugin:servers/z"));
+        QCOMPARE(zulu.value("extension").toString(), QString("SMB"));
+        QCOMPARE(zulu.value("icon").toString(), QString("drive"));
+        QCOMPARE(model.get(1).value("details").toList().at(0).toList(), QVariantList({"Host", "alpha.example"}));
+        model.setQuery("ALP");
+        QVERIFY(loaded.wait(3000));
+        QCOMPARE(model.count(), 1);
+
+        // A view is a place of its own, named by its title, and opening an
+        // item goes where it says.
+        Backend backend(home.path());
+        backend.setPlugins(&plugins);
+        backend.navigate("plugin:servers");
+        QCOMPARE(backend.path(), QString("plugin:servers"));
+        QCOMPARE(backend.title(), QString("Servers"));
+        QCOMPARE(backend.crumbs().size(), 1);
+        QCOMPARE(backend.crumbs().at(0).toMap().value("name").toString(), QString("Servers"));
+        backend.goUp();
+        QCOMPARE(backend.path(), QString("plugin:servers"));
+        QVERIFY(backend.goTyped(backend.typedPath()));
+        QCOMPARE(backend.path(), QString("plugin:servers"));
+        backend.open("plugin:servers/z");
+        QCOMPARE(backend.path(), QDir::cleanPath(home.path()));
+        // A view no plugin has isn't anywhere to go.
+        QVERIFY(!backend.goTyped("plugin:nothing"));
+        QCOMPARE(backend.path(), QDir::cleanPath(home.path()));
     }
 
     void placesListOnlyPhysicalDrives()
