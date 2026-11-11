@@ -11,6 +11,17 @@ Menu {
     bottomPadding: 4
     // Submenu entries (Open With, Share) are made from this.
     delegate: FolioMenuItem { }
+    // As wide as its widest entry shown, so a long label (in any language)
+    // never runs into its keys.
+    width: {
+        let widest = implicitBackgroundWidth
+        for (let i = 0; i < count; ++i) {
+            const entry = itemAt(i)
+            if (entry && entry.visible)
+                widest = Math.max(widest, entry.implicitWidth + leftPadding + rightPadding)
+        }
+        return widest
+    }
 
     background: Rectangle {
         implicitWidth: 240
