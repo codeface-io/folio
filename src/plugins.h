@@ -158,6 +158,8 @@ public:
     // Longest a poll may take, and most a command may print.
     static constexpr int pollTimeout = 10000;
     static constexpr int maxOutput = 1 << 20;
+    // Longest line of standard error kept.
+    static constexpr int maxErrorLine = 1000;
 
 signals:
     void changed();

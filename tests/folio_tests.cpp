@@ -23,6 +23,7 @@
 #include <QtTest>
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -1643,6 +1644,32 @@ private slots:
 
         // A program that isn't there never starts.
         QVERIFY(!Plugins::execute(plugin, {"folio-no-such-program"}, env, 1000).started);
+    }
+
+    void pluginCommandsThatFloodAreHeldToLittleMemory()
+    {
+        QTemporaryDir folder;
+        writePlugin(folder.path(), "floods", R"({"folio": 1})");
+        const auto plugin = Plugins::read({folder.path()}, "en").value(0);
+        const auto env = QProcessEnvironment::systemEnvironment();
+        auto peak = [] {
+            rusage usage;
+            getrusage(RUSAGE_SELF, &usage);
+            return usage.ru_maxrss / 1024;
+        };
+        const long before = peak();
+
+        // Standard output is ended soon after the limit, not read on.
+        const Plugins::Run out = Plugins::execute(plugin, {"sh", "-c", "exec cat /dev/zero"}, env, 5000);
+        QVERIFY(out.tooLong && !out.ok());
+        QVERIFY(out.out.size() < 2 * Plugins::maxOutput);
+
+        // Standard error without line breaks is cut into lines of its own,
+        // not gathered up for as long as the command runs.
+        const Plugins::Run err = Plugins::execute(plugin, {"sh", "-c", "exec cat /dev/zero >&2"}, env, 1000);
+        QVERIFY(err.timedOut);
+        QVERIFY(err.lastError.size() <= 1000);
+        QVERIFY2(peak() - before < 100, qPrintable(QString("grew by %1 MB").arg(peak() - before)));
     }
 
     void pluginOutputIsReadOrRefused()

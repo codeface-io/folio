@@ -5,6 +5,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
@@ -286,40 +287,62 @@ Plugins::Run Plugins::execute(const Manifest &plugin, const QStringList &command
     const qint64 group = process.processId();
 
     // Standard error goes to Folio's, a line at a time, marked with the
-    // plugin's id; its last line can say why a share entry failed.
-    QByteArray errors;
-    auto readErrors = [&](bool all) {
-        errors += process.readAllStandardError();
-        qsizetype end;
-        while ((end = errors.indexOf('\n')) >= 0 || (all && !errors.isEmpty())) {
-            if (end < 0)
-                end = errors.size();
-            const QString line = QString::fromUtf8(errors.left(end)).trimmed();
-            errors.remove(0, end + 1);
-            if (!line.isEmpty()) {
-                complain(plugin.id, line);
-                run.lastError = line;
-            }
+    // plugin's id; its last line can say why a share entry failed. A line
+    // is cut short at maxErrorLine bytes and the rest of it dropped, so one
+    // that never ends can't fill memory.
+    QByteArray line;
+    auto flush = [&] {
+        const QString said = QString::fromUtf8(line).trimmed();
+        line.clear();
+        if (!said.isEmpty()) {
+            complain(plugin.id, said);
+            run.lastError = said;
         }
     };
+    auto readErrors = [&](bool all) {
+        // Each piece but the last ends a line; the last is the start of one.
+        const QList<QByteArray> pieces = process.readAllStandardError().split('\n');
+        for (qsizetype i = 0; i < pieces.size(); ++i) {
+            line += pieces[i].left(std::max<qsizetype>(0, maxErrorLine - line.size()));
+            if (i + 1 < pieces.size())
+                flush();
+        }
+        if (all)
+            flush();
+    };
 
+    // Output is taken as it comes, a pipe's worth at a time, in an event
+    // loop of this thread's own: waiting for the process to finish would
+    // read everything a flood prints before the limit could be checked.
+    QEventLoop loop;
+    auto end = [&] { ::kill(-pid_t(group), SIGKILL); };
+    // Past the limit, what's left is read and dropped.
+    auto readOut = [&] {
+        run.out += process.readAllStandardOutput().left(std::max<qsizetype>(0, maxOutput + 1 - run.out.size()));
+        run.tooLong = run.out.size() > maxOutput;
+    };
+    QObject::connect(&process, &QProcess::readyReadStandardOutput, &loop, [&] {
+        readOut();
+        if (run.tooLong)
+            end();
+    });
+    QObject::connect(&process, &QProcess::readyReadStandardError, &loop, [&] { readErrors(false); });
+    QObject::connect(&process, &QProcess::finished, &loop, &QEventLoop::quit);
     QElapsedTimer clock;
     clock.start();
-    while (!process.waitForFinished(50) && process.state() != QProcess::NotRunning) {
-        run.out += process.readAllStandardOutput();
-        readErrors(false);
-        run.timedOut = timeout >= 0 && clock.elapsed() > timeout;
-        run.tooLong = run.out.size() > maxOutput;
-        if (run.timedOut || run.tooLong || (stop && *stop)) {
-            ::kill(-pid_t(group), SIGKILL);
-            process.waitForFinished(1000);
-            return run;
-        }
-    }
-    run.out += process.readAllStandardOutput();
+    QTimer check;
+    QObject::connect(&check, &QTimer::timeout, &loop, [&] {
+        run.timedOut = run.timedOut || (timeout >= 0 && clock.elapsed() > timeout);
+        if (run.timedOut || (stop && *stop))
+            end();
+    });
+    check.start(50);
+    if (process.state() != QProcess::NotRunning)
+        loop.exec();
+    readOut();
     readErrors(true);
-    run.tooLong = run.out.size() > maxOutput;
-    run.code = process.exitStatus() == QProcess::NormalExit ? process.exitCode() : -1;
+    if (!run.timedOut && !run.tooLong)
+        run.code = process.exitStatus() == QProcess::NormalExit ? process.exitCode() : -1;
     return run;
 }
 
