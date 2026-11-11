@@ -55,7 +55,7 @@ public:
     // The text size, in pixels, from `fontSize` in ~/.config/folio/folio.conf.
     // Read once at launch: the app font is set from it before any window
     // opens. File marks, toolbar glyphs and the rows that hold text follow;
-    // grid pictures stay on the zoom Ctrl+= sets.
+    // the padding around them stays. Grid pictures stay on the zoom Ctrl+= sets.
     static constexpr int defaultFontSize = 13;
     static int fontSizeFrom(const QVariant &value);
     static int configuredFontSize();

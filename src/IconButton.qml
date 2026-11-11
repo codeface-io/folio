@@ -9,8 +9,9 @@ AbstractButton {
     property string glyph
     property bool active: false
 
-    implicitWidth: Math.max(36, theme.scaled(36))
-    implicitHeight: Math.max(36, theme.scaled(36))
+    // The 9px around the glyph stays; the button grows with the mark.
+    implicitWidth: Math.max(36, theme.scaled(18) + 18)
+    implicitHeight: implicitWidth
     focusPolicy: Qt.NoFocus
     hoverEnabled: true
 

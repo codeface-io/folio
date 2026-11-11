@@ -75,8 +75,8 @@ Item {
         spacing: 12
 
         Item {
-            implicitWidth: Math.max(20, theme.scaled(20))
-            implicitHeight: Math.max(20, theme.scaled(20))
+            implicitWidth: Math.max(20, theme.scaled(16) + 4)
+            implicitHeight: implicitWidth
             Image {
                 id: thumb
                 anchors.fill: parent
@@ -94,8 +94,8 @@ Item {
             }
             Rectangle {
                 id: rowMask
-                width: Math.max(20, theme.scaled(20))
-                height: Math.max(20, theme.scaled(20))
+                width: Math.max(20, theme.scaled(16) + 4)
+                height: width
                 radius: Math.min(4, theme.radius)
                 visible: false
                 layer.enabled: true

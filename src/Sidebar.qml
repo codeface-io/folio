@@ -237,8 +237,8 @@ Rectangle {
                         id: unpin
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
-                        implicitWidth: Math.max(28, theme.scaled(28))
-                        implicitHeight: Math.max(28, theme.scaled(28))
+                        implicitWidth: Math.max(28, theme.scaled(18) + 10)
+                        implicitHeight: implicitWidth
                         visible: pinRow.hovered || hovered
                         glyph: "close"
                         text: qsTr("Unpin")
@@ -330,8 +330,8 @@ Rectangle {
                         id: forget
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
-                        implicitWidth: Math.max(28, theme.scaled(28))
-                        implicitHeight: Math.max(28, theme.scaled(28))
+                        implicitWidth: Math.max(28, theme.scaled(18) + 10)
+                        implicitHeight: implicitWidth
                         visible: machineRow.hovered || hovered
                         glyph: "close"
                         text: qsTr("Remove from the sidebar")
@@ -367,8 +367,8 @@ Rectangle {
         anchors.bottom: parent.bottom
         anchors.leftMargin: 18
         anchors.bottomMargin: 12
-        implicitWidth: Math.max(24, theme.scaled(24))
-        implicitHeight: Math.max(24, theme.scaled(24))
+        implicitWidth: Math.max(24, theme.scaled(13) + 11)
+        implicitHeight: implicitWidth
         focusPolicy: Qt.NoFocus
         hoverEnabled: true
         text: qsTr("Keyboard shortcuts")

@@ -103,7 +103,8 @@ ApplicationWindow {
         LayoutMirroring.childrenInherit: true
 
         // The bar across the top; the panes' path bars draw over it.
-        readonly property int barHeight: Math.max(60, theme.scaled(60))
+        // The 12px above and below the buttons stays; the bar grows with the marks.
+        readonly property int barHeight: Math.max(60, theme.scaled(18) + 18 + 24)
         Rectangle {
             width: parent.width
             height: parent.barHeight

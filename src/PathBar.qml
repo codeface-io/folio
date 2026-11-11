@@ -60,7 +60,8 @@ Rectangle {
     // Transparent: the window draws one bar across the whole top, so the
     // path bars of one or two panes read as part of it.
     color: "transparent"
-    implicitHeight: Math.max(60, theme.scaled(60))
+    // The 12px above and below the buttons stays; the bar grows with the marks.
+    implicitHeight: Math.max(60, theme.scaled(18) + 18 + 24)
 
     RowLayout {
         anchors.fill: parent
