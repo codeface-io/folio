@@ -300,9 +300,12 @@ FocusScope {
                     color: theme.brightForeground
                     elide: Text.ElideRight
                 }
-                // File work can be stopped where it's shown.
+                // File work can be stopped where it's shown. A click leaves
+                // the keyboard with the files, since the button goes once
+                // the work stops.
                 PlainButton {
                     visible: fileOps.busy.length > 0 && bannerText.text === fileOps.busy
+                    focusPolicy: Qt.NoFocus
                     implicitHeight: 28
                     text: qsTr("Cancel")
                     onClicked: fileOps.cancel()
