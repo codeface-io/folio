@@ -68,7 +68,7 @@ Rectangle {
                     anchors.margins: 14
                     text: pane.info.text || ""
                     color: theme.foreground
-                    font.pixelSize: 10
+                    font.pixelSize: theme.scaled(10)
                     wrapMode: Text.WrapAnywhere
                     textFormat: Text.PlainText
                     elide: Text.ElideRight
@@ -92,7 +92,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: pane.item.name || ""
                 color: theme.brightForeground
-                font.pixelSize: 15
+                font.pixelSize: theme.scaled(15)
                 font.weight: Font.DemiBold
                 wrapMode: Text.WrapAnywhere
                 maximumLineCount: 3
@@ -102,7 +102,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: Format.summary(pane.item, pane.info.type)
                 color: theme.secondaryForeground
-                font.pixelSize: 12
+                font.pixelSize: theme.scaled(12)
                 elide: Text.ElideRight
             }
         }
@@ -113,17 +113,17 @@ Rectangle {
             rowSpacing: 12
             columnSpacing: 16
 
-            Text { visible: pane.trashed; text: qsTr("From"); color: theme.secondaryForeground; font.pixelSize: 12 }
+            Text { visible: pane.trashed; text: qsTr("From"); color: theme.secondaryForeground; font.pixelSize: theme.scaled(12) }
             Text {
                 visible: pane.trashed
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignRight
                 text: pane.trashed ? pane.homeless(pane.origin.replace(/\/[^\/]*$/, "") || "/") : ""
                 color: theme.foreground
-                font.pixelSize: 12
+                font.pixelSize: theme.scaled(12)
                 elide: Text.ElideMiddle
             }
-            Text { text: pane.trashed || pane.noting ? qsTr("Deleted") : qsTr("Modified"); color: theme.secondaryForeground; font.pixelSize: 12 }
+            Text { text: pane.trashed || pane.noting ? qsTr("Deleted") : qsTr("Modified"); color: theme.secondaryForeground; font.pixelSize: theme.scaled(12) }
             Text {
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignRight
@@ -133,16 +133,16 @@ Rectangle {
                     return pane.hasItem && when ? when.toLocaleString(Qt.locale(), Locale.ShortFormat) : ""
                 }
                 color: theme.foreground
-                font.pixelSize: 12
+                font.pixelSize: theme.scaled(12)
             }
-            Text { visible: !!pane.info.dimensions; text: qsTr("Dimensions"); color: theme.secondaryForeground; font.pixelSize: 12 }
+            Text { visible: !!pane.info.dimensions; text: qsTr("Dimensions"); color: theme.secondaryForeground; font.pixelSize: theme.scaled(12) }
             Text {
                 visible: !!pane.info.dimensions
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignRight
                 text: pane.info.dimensions || ""
                 color: theme.foreground
-                font.pixelSize: 12
+                font.pixelSize: theme.scaled(12)
             }
         }
 

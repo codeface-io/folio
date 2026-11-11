@@ -71,7 +71,7 @@ Item {
         width: parent.width - 28
         text: tile.name
         color: tile.current ? theme.accent : theme.foreground
-        font.pixelSize: 12
+        font.pixelSize: theme.scaled(12)
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.WrapAtWordBoundaryOrAnywhere
         maximumLineCount: 2
@@ -93,7 +93,7 @@ Item {
             return [size, date].filter(part => part.length > 0).join(" · ")
         }
         color: theme.secondaryForeground
-        font.pixelSize: 10
+        font.pixelSize: theme.scaled(10)
         horizontalAlignment: Text.AlignHCenter
         elide: Text.ElideRight
     }
@@ -271,7 +271,7 @@ Item {
                 width: badge.implicitWidth + 8
                 height: badge.implicitHeight + 2
                 color: tile.kindColor
-                Text { id: badge; anchors.centerIn: parent; text: tile.extension.slice(0, 4); font.pixelSize: 9; font.bold: true; color: theme.background }
+                Text { id: badge; anchors.centerIn: parent; text: tile.extension.slice(0, 4); font.pixelSize: theme.scaled(9); font.bold: true; color: theme.background }
             }
         }
     }
@@ -302,7 +302,7 @@ Item {
                     }
                 }
             }
-            Text { anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 5; text: tile.extension; font.pixelSize: 9; color: theme.secondaryForeground }
+            Text { anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 5; text: tile.extension; font.pixelSize: theme.scaled(9); color: theme.secondaryForeground }
         }
     }
 

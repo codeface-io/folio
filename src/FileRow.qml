@@ -28,7 +28,7 @@ Item {
     signal clicked(int modifiers)
     signal activated()
 
-    implicitHeight: 32
+    implicitHeight: Math.max(32, theme.scaled(32))
 
     // The name always gets room: in a narrow window the date goes first,
     // then the size. (The icon says what kind a file is; there's no column
@@ -119,7 +119,7 @@ Item {
             horizontalAlignment: Text.AlignRight
             text: row.isDir ? Format.count(row.itemCount) : Format.size(row.size)
             color: theme.secondaryForeground
-            font.pixelSize: 12
+            font.pixelSize: theme.scaled(12)
         }
         Text {
             visible: row.showDate
@@ -130,7 +130,7 @@ Item {
                 return Format.when(row.modified)
             }
             color: theme.secondaryForeground
-            font.pixelSize: 12
+            font.pixelSize: theme.scaled(12)
             elide: Text.ElideRight
         }
         Glyph {

@@ -6,6 +6,7 @@
 #include <QObject>
 #include <QProcess>
 #include <QTimer>
+#include <QVariant>
 
 // The Omarchy palette, followed live. A file manager draws far more surface
 // than a one-tool app, so it reads the whole colors.toml rather than only the
@@ -28,6 +29,7 @@ class Theme : public QObject {
     Q_PROPERTY(QColor orange READ orange NOTIFY changed)
     Q_PROPERTY(bool light READ light NOTIFY changed)
     Q_PROPERTY(int radius READ radius NOTIFY changed)
+    Q_PROPERTY(int fontSize READ fontSize CONSTANT)
 
 public:
     explicit Theme(const QString &currentDirectory = {}, QObject *parent = nullptr, const QString &hyprctl = {});
@@ -50,6 +52,17 @@ public:
     bool light() const { return m_light; }
     int radius() const { return m_radius; }
 
+    // The text size, in pixels, from `fontSize` in ~/.config/folio/folio.conf.
+    // Read once at launch: the app font is set from it before any window
+    // opens. Icons and pictures keep their size; only text and the rows that
+    // hold it follow.
+    static constexpr int defaultFontSize = 13;
+    static int fontSizeFrom(const QVariant &value);
+    static int configuredFontSize();
+    int fontSize() const { return m_fontSize; }
+    // A size drawn for the default 13px text, grown or shrunk to match.
+    Q_INVOKABLE int scaled(int size) const { return qRound(size * m_fontSize / double(defaultFontSize)); }
+
 signals:
     void changed();
 
@@ -65,6 +78,7 @@ private:
     QTimer m_debounce;
     QString m_hyprctl;
     int m_radius = 0;
+    int m_fontSize = configuredFontSize();
     QProcess m_roundingProcess;
     QTimer m_roundingPoll, m_roundingTimeout;
 };

@@ -88,7 +88,7 @@ Rectangle {
         Layout.leftMargin: 14
         Layout.bottomMargin: 6
         color: theme.secondaryForeground
-        font.pixelSize: 11
+        font.pixelSize: theme.scaled(11)
         font.letterSpacing: 1.3
         font.capitalization: Font.AllUppercase
     }
@@ -107,7 +107,7 @@ Rectangle {
         property color statusColor
 
         Layout.fillWidth: true
-        implicitHeight: 34
+        implicitHeight: Math.max(34, theme.scaled(34))
         leftPadding: 14
         rightPadding: 14
         hoverEnabled: true
@@ -146,7 +146,7 @@ Rectangle {
                 elide: Text.ElideRight
                 color: row.active ? theme.brightForeground : theme.foreground
             }
-            Text { visible: row.status.length > 0; text: row.status; color: row.statusColor; font.pixelSize: 11 }
+            Text { visible: row.status.length > 0; text: row.status; color: row.statusColor; font.pixelSize: theme.scaled(11) }
         }
     }
 
@@ -232,7 +232,7 @@ Rectangle {
             }
             Rectangle {
                 Layout.fillWidth: true
-                implicitHeight: 34
+                implicitHeight: Math.max(34, theme.scaled(34))
                 visible: sidebar.dragging
                 color: Qt.alpha(theme.accent, pinDrop.containsDrag ? 0.22 : 0.08)
                 border.width: pinDrop.containsDrag ? 2 : 1
@@ -242,7 +242,7 @@ Rectangle {
                     anchors.centerIn: parent
                     text: qsTr("Drop to pin")
                     color: theme.accent
-                    font.pixelSize: 12
+                    font.pixelSize: theme.scaled(12)
                 }
                 DropArea {
                     id: pinDrop

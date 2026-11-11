@@ -55,7 +55,9 @@ GridView {
     model: backend.folder
     readonly property int columns: Math.max(1, Math.floor(width / 168))
     cellWidth: Math.floor(width / columns)
-    cellHeight: 192
+    // The picture keeps its size; the name and details under it make room
+    // for larger text.
+    cellHeight: Math.max(192, 148 + theme.scaled(44))
     highlightFollowsCurrentItem: false
     ScrollBar.vertical: FolioScrollBar { }
 

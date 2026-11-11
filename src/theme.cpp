@@ -8,6 +8,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QStandardPaths>
 #include <cmath>
 
@@ -127,6 +128,18 @@ void Theme::refreshRounding() {
         return;
     m_roundingProcess.start(m_hyprctl, {"-j", "getoption", "decoration:rounding"});
     m_roundingTimeout.start();
+}
+
+// Anything that isn't a whole number in a readable range is the default, so
+// a typo in folio.conf can't make the window unusable.
+int Theme::fontSizeFrom(const QVariant &value) {
+    bool ok = false;
+    const int size = value.toInt(&ok);
+    return ok && size >= 8 && size <= 32 ? size : defaultFontSize;
+}
+
+int Theme::configuredFontSize() {
+    return fontSizeFrom(QSettings().value("fontSize"));
 }
 
 QColor Theme::color(const QString &key) const {

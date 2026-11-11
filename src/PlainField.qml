@@ -5,7 +5,7 @@ import QtQuick.Controls
 // and the hint inside it, where it stays (no floating label animation).
 TextField {
     id: field
-    font.pixelSize: 13
+    font.pixelSize: theme.scaled(13)
     color: theme.brightForeground
     selectionColor: theme.accent
     selectedTextColor: theme.accentForeground
@@ -17,7 +17,7 @@ TextField {
     topPadding: 9
     bottomPadding: 9
     background: Rectangle {
-        implicitHeight: 38
+        implicitHeight: Math.max(38, theme.scaled(38))
         color: theme.darkBackground
         border.width: 1
         border.color: field.activeFocus ? theme.accent : Qt.alpha(theme.foreground, 0.18)
