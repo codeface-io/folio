@@ -114,7 +114,7 @@ QStringList Plugins::defaultFolders() {
     QString packaged = qEnvironmentVariable("FOLIO_PLUGINS_PATH");
     const QString checkout = QCoreApplication::applicationDirPath() + "/..";
     if (packaged.isEmpty())
-        packaged = QFileInfo::exists(checkout + "/folio.pro") ? QDir::cleanPath(checkout + "/plugins")
+        packaged = QFileInfo::exists(checkout + "/CMakeLists.txt") ? QDir::cleanPath(checkout + "/plugins")
                                                               : QStringLiteral("/usr/share/folio/plugins");
     return {packaged, QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/folio/plugins"};
 }
