@@ -1676,6 +1676,14 @@ private slots:
         QVERIFY2(peak() - before < 100, qPrintable(QString("grew by %1 MB").arg(peak() - before)));
     }
 
+    void mountsAreFoundWhereGvfsPutsThem()
+    {
+        // GVfs names an SFTP mount by the URL's parts, in key order.
+        QCOMPARE(Mounter::folderFor("sftp://studio.example.ts.net/"), Mounter::root() + "/sftp:host=studio.example.ts.net");
+        QCOMPARE(Mounter::folderFor("sftp://me@nas:2222/srv"), Mounter::root() + "/sftp:host=nas,port=2222,user=me");
+        QCOMPARE(Mounter::folderFor("smb://nas/share"), QString());
+    }
+
     void pluginOutputIsReadOrRefused()
     {
         const auto output = Plugins::parseOutput(R"({

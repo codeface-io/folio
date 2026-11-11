@@ -96,7 +96,9 @@ QString Mounter::folderFor(const QString &url) {
     const QUrl parsed(url);
     if (parsed.scheme() != "sftp" || parsed.host().isEmpty())
         return {};
-    return root() + "/sftp:host=" + parsed.host() + (parsed.userName().isEmpty() ? QString() : ",user=" + parsed.userName());
+    // GVfs keeps a mount's parts sorted by key: host, port, user.
+    return root() + "/sftp:host=" + parsed.host() + (parsed.port() < 0 ? QString() : ",port=" + QString::number(parsed.port()))
+           + (parsed.userName().isEmpty() ? QString() : ",user=" + parsed.userName());
 }
 
 void Mounter::mount(const QString &uri, bool verified) {
