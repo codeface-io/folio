@@ -178,7 +178,11 @@ static bool copyFile(const QString &from, const QString &to, FileOps::Job *job) 
         ssize_t n;
         if (kernel) {
             n = copy_file_range(in.handle(), nullptr, out.handle(), nullptr, 8 << 20, 0);
-            if (n < 0 && (errno == EXDEV || errno == EINVAL || errno == ENOSYS || errno == EOPNOTSUPP)) {
+            // Some drives (FUSE ones, files that say they're empty) answer
+            // 0 when they can't, which would end a copy early and, moving,
+            // remove an original that was never copied: reading finds the
+            // real end.
+            if (n == 0 || (n < 0 && (errno == EXDEV || errno == EINVAL || errno == ENOSYS || errno == EOPNOTSUPP))) {
                 kernel = false;
                 continue;
             }
