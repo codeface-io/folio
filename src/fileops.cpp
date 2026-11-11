@@ -277,8 +277,14 @@ static QStringList outermost(const QStringList &paths) {
     for (const QString &path : paths)
         chosen.insert(QDir::cleanPath(path));
     QStringList beyondLinks, outer;
+    // Each once, however often it was chosen (another app's clipboard can
+    // name one twice).
+    QSet<QString> seen;
     for (const QString &path : paths) {
         const QString clean = QDir::cleanPath(path);
+        if (seen.contains(clean))
+            continue;
+        seen.insert(clean);
         bool inside = false, beyondLink = false;
         for (qsizetype slash = clean.lastIndexOf('/'); slash > 0 && !inside && !beyondLink;
              slash = clean.lastIndexOf('/', slash - 1)) {

@@ -1574,6 +1574,19 @@ private slots:
         QCOMPARE(FileOps::originalPath(trashed), elsewhere.filePath("a.txt"));
     }
 
+    void fileOpsTakeAnItemChosenTwiceOnce()
+    {
+        // The same item can be handed over twice (from another app's
+        // clipboard); it's copied once, not once more as a "(copy)".
+        QTemporaryDir from, to;
+        write(from.filePath("a.txt"), "a");
+        QString error;
+        QCOMPARE(FileOps::transfer({from.filePath("a.txt"), from.filePath("a.txt")}, to.path(), FileOps::Copy, &error),
+                 QStringList({"a.txt"}));
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(QDir(to.path()).entryList(QDir::Files), QStringList({"a.txt"}));
+    }
+
     void extractOneItemBesideTheArchive()
     {
         // An archive holding one folder (or file) puts it beside the
