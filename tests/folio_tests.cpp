@@ -1684,6 +1684,26 @@ private slots:
         QCOMPARE(Mounter::folderFor("smb://nas/share"), QString());
     }
 
+    void pluginIconsTakeTheThemesColor()
+    {
+        QTemporaryDir folder;
+        const QString svg = folder.filePath("mark.svg");
+        QFile file(svg);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='#00ff00' d='M0 0h12v24H0z'/></svg>");
+        file.close();
+        PluginIconProvider provider;
+        QSize size;
+        const QImage image = provider.requestImage("ff0000/" + QUrl::toPercentEncoding(svg), &size, QSize(24, 24));
+        QCOMPARE(size, QSize(24, 24));
+        // Drawn in the color asked for, whatever color the SVG has, and
+        // clear where the SVG draws nothing.
+        QCOMPARE(image.pixelColor(4, 12), QColor(255, 0, 0));
+        QCOMPARE(image.pixelColor(20, 12).alpha(), 0);
+        // A file that can't be read is an empty square, not an error.
+        QCOMPARE(provider.requestImage("ff0000/%2Fnowhere.svg", nullptr, QSize(24, 24)).pixelColor(4, 12).alpha(), 0);
+    }
+
     void pluginOutputIsReadOrRefused()
     {
         const auto output = Plugins::parseOutput(R"({
