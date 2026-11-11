@@ -395,7 +395,9 @@ void Places::refreshDevices() {
         if (!v.isValid() || !v.isReady())
             continue;
         Mount mount{v.rootPath(), QString::fromUtf8(v.device()), QString::fromUtf8(v.fileSystemType()), v.name()};
-        mount.free = v.bytesAvailable();
+        // A read-only medium (an installer image, a DVD) has nothing free to
+        // speak of; it says nothing rather than "0 B free".
+        mount.free = v.isReadOnly() ? -1 : v.bytesAvailable();
         if (GMount *gmount = mountAt(mount.root)) {
             mount.canEject = g_mount_can_eject(gmount);
             mount.canUnmount = g_mount_can_unmount(gmount);

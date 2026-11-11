@@ -91,6 +91,7 @@ public:
     static QString expandTyped(const QString &text, const QString &home, const QString &current);
     static QString complete(const QString &text, const QString &home, const QString &current);
     static QString mountLabel(const QString &mountFolder);
+    static QString driveRoot(const QString &path);
     // A server address (sftp://, smb://, ftp://, dav://, davs://) as GIO
     // mounts it, or empty when the text isn't one.
     static QString serverAddress(const QString &text);

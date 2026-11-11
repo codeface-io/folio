@@ -146,7 +146,8 @@ Rectangle {
                         readonly property bool last: index === backend.crumbs.length - 1
                         spacing: 10
                         Text {
-                            visible: crumb.index > 0
+                            // No separator after / itself: "/ run", not "/ / run".
+                            visible: crumb.index > 0 && !(crumb.index === 1 && backend.crumbs[0].name === "/")
                             text: "/"
                             color: Qt.alpha(theme.foreground, 0.35)
                             font.pixelSize: 14

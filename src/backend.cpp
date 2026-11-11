@@ -8,6 +8,7 @@
 #include <QFutureWatcher>
 #include <QImageReader>
 #include <QMimeDatabase>
+#include <QStorageInfo>
 #include <QUrl>
 #include <QtConcurrent>
 #include <unistd.h>
@@ -90,9 +91,25 @@ QString Backend::title() const {
     return QFileInfo(p).fileName();
 }
 
+// Where the removable or extra drive holding `path` is mounted, when it's one
+// (under /run/media, /media or /mnt), so its path starts at its name rather
+// than at /run/media/<user>/.
+QString Backend::driveRoot(const QString &path) {
+    static const QStringList places{"/run/media/", "/media/", "/mnt/"};
+    for (const QString &place : places) {
+        if (!path.startsWith(place))
+            continue;
+        const QString root = QStorageInfo(path).rootPath();
+        if (root.startsWith(place) && (path == root || path.startsWith(root + "/")))
+            return root;
+    }
+    return {};
+}
+
 QVariantList Backend::crumbs() const {
     // Breadcrumbs start at the nearest root that means something to a person:
-    // ~ for home, a tailnet machine's name for its mount, / otherwise.
+    // ~ for home, a tailnet machine's name for its mount, a drive's name for
+    // a drive, / otherwise.
     const QString p = path();
     if (p == FolderModel::recentPath())
         return {QVariantMap{{"name", tr("Recents")}, {"path", p}}};
@@ -110,6 +127,9 @@ QVariantList Backend::crumbs() const {
         const QString mount = p.section('/', 0, 5);
         base = mount;
         label = mountLabel(mount.section('/', -1));
+    } else if (const QString drive = driveRoot(p); !drive.isEmpty()) {
+        base = drive;
+        label = QFileInfo(drive).fileName();
     }
 
     QVariantList crumbs{QVariantMap{{"name", label}, {"path", base}}};
