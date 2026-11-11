@@ -55,6 +55,21 @@ std::optional<QStringList> commandOf(const QJsonValue &value) {
     return list;
 }
 
+// Sets a process up to run a plugin's command: in its folder, with its
+// environment and nothing on standard input. ./x and bin/x are the
+// plugin's own programs; a bare name comes from PATH.
+void prepare(QProcess &process, const Plugins::Manifest &plugin, const QStringList &command,
+             const QProcessEnvironment &environment) {
+    QString program = command.value(0);
+    if (program.contains('/') && !QDir::isAbsolutePath(program))
+        program = QDir(plugin.dir).filePath(program);
+    process.setProgram(program);
+    process.setArguments(command.mid(1));
+    process.setWorkingDirectory(plugin.dir);
+    process.setProcessEnvironment(environment);
+    process.setStandardInputFile(QProcess::nullDevice());
+}
+
 QString pathOf(const QString &plugin, const QString &item) {
     return "plugin:" + plugin + "/" + item;
 }
@@ -274,21 +289,13 @@ std::optional<Plugins::Output> Plugins::parseOutput(const QByteArray &json) {
 Plugins::Run Plugins::execute(const Manifest &plugin, const QStringList &command, const QProcessEnvironment &environment,
                               int timeout, const std::atomic<bool> *stop) {
     Run run;
-    // ./x and bin/x are the plugin's own; a bare name comes from PATH.
-    QString program = command.value(0);
-    if (program.contains('/') && !QDir::isAbsolutePath(program))
-        program = QDir(plugin.dir).filePath(program);
     QProcess process;
-    process.setProgram(program);
-    process.setArguments(command.mid(1));
-    process.setWorkingDirectory(plugin.dir);
-    process.setProcessEnvironment(environment);
-    process.setStandardInputFile(QProcess::nullDevice());
+    prepare(process, plugin, command, environment);
     // A group of its own, so ending it ends everything it started too.
     process.setChildProcessModifier([] { ::setpgid(0, 0); });
     process.start();
     if (!process.waitForStarted(5000)) {
-        complain(plugin.id, program + " couldn't be started: " + process.errorString());
+        complain(plugin.id, process.program() + " couldn't be started: " + process.errorString());
         return run;
     }
     run.started = true;
@@ -680,14 +687,7 @@ void Plugins::act(const Manifest &plugin, const QString &key, const QString &lab
     if (detach) {
         // Started and forgotten: a program with a window of its own.
         QProcess process;
-        QString program = command.first();
-        if (program.contains('/') && !QDir::isAbsolutePath(program))
-            program = QDir(plugin.dir).filePath(program);
-        process.setProgram(program);
-        process.setArguments(command.mid(1));
-        process.setWorkingDirectory(plugin.dir);
-        process.setProcessEnvironment(environment);
-        process.setStandardInputFile(QProcess::nullDevice());
+        prepare(process, plugin, command, environment);
         Result result;
         if (!process.startDetached())
             result.error = tr("%1: %2").arg(label, process.errorString());
