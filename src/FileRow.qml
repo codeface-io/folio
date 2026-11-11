@@ -18,6 +18,7 @@ Item {
     required property var size
     required property var modified
     required property int itemCount
+    required property string icon
     required property bool selected
 
     property bool current: false

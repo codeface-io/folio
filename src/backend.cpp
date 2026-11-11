@@ -25,6 +25,9 @@ Backend::Backend(const QString &home, QObject *parent)
     });
     connect(&m_mounter, &Mounter::mounted, this, [this](const QString &folder) {
         setBusy({});
+        // The mount's folder is known now, so the plugin's row can light up.
+        if (m_plugins)
+            m_plugins->mountsChanged();
         // A bare server lands in the matching home folder when the other
         // machine has one, which among one person's machines it usually does.
         const QString remoteHome = folder + QDir::homePath();
@@ -154,6 +157,7 @@ bool Backend::go(const QString &path, bool record) {
     }
     m_folder.setPath(clean);
     emit pathChanged();
+    emit placeChanged();
     return true;
 }
 
@@ -207,6 +211,14 @@ void Backend::forward() {
     ++m_index;
     if (!go(m_history.at(m_index), false))
         --m_index;
+}
+
+void Backend::setPlugins(Plugins *plugins) {
+    m_plugins = plugins;
+    connect(plugins, &Plugins::changed, this, [this] {
+        if (FolderModel::isPluginView(path()))
+            emit placeChanged();
+    });
 }
 
 void Backend::openItem(const QString &path) {

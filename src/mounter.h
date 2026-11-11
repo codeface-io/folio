@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QObject>
 #include <QString>
 
@@ -34,6 +35,8 @@ public:
     // SFTP, whose folder is named by the URL alone; empty for the rest.
     static QString root();
     static QString folderFor(const QString &url);
+    // Each address mounted this session and the folder GVfs gave it.
+    static QHash<QString, QString> &known();
 
     // The user's answer to a password request; remembered for this session
     // only, never written to a keyring without asking.
@@ -54,6 +57,7 @@ private:
 
     GMountOperation *m_operation = nullptr;
     bool m_verified = false;
+    QString m_url;
     // GVfs's question when it was declined, which says why the mount failed.
     QString m_declined;
     bool m_asking = false;

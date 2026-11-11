@@ -61,6 +61,10 @@ struct MounterCallbacks {
                 char *path = g_file_get_path(G_FILE(source));
                 const QString local = QString::fromUtf8(path ? path : "");
                 g_free(path);
+                // Where GVfs put it, for the address it was asked for: only
+                // SFTP's folder can be worked out ahead of time.
+                if (local.startsWith(Mounter::root() + "/"))
+                    Mounter::known()[self->m_url] = local.section('/', 0, 5);
                 self->finish();
                 if (local.isEmpty())
                     emit self->failed(QObject::tr("GVfs mounted it but gave no local folder for it"));
@@ -92,10 +96,15 @@ QString Mounter::root() {
     return QStringLiteral("/run/user/%1/gvfs").arg(getuid());
 }
 
+QHash<QString, QString> &Mounter::known() {
+    static QHash<QString, QString> roots;
+    return roots;
+}
+
 QString Mounter::folderFor(const QString &url) {
     const QUrl parsed(url);
     if (parsed.scheme() != "sftp" || parsed.host().isEmpty())
-        return {};
+        return known().value(url);
     // GVfs keeps a mount's parts sorted by key: host, port, user.
     return root() + "/sftp:host=" + parsed.host() + (parsed.port() < 0 ? QString() : ",port=" + QString::number(parsed.port()))
            + (parsed.userName().isEmpty() ? QString() : ",user=" + parsed.userName());
@@ -105,6 +114,7 @@ void Mounter::mount(const QString &uri, bool verified) {
     if (m_operation)
         return;
     m_verified = verified;
+    m_url = uri;
     m_declined.clear();
     GFile *file = g_file_new_for_uri(uri.toUtf8().constData());
     m_operation = g_mount_operation_new();

@@ -210,7 +210,10 @@ QList<Plugins::Manifest> Plugins::read(const QStringList &folders, const QString
     // order, which is the order sections, marks and entries go in.
     static const QRegularExpression validId("^[a-z0-9][a-z0-9-]*$");
     QMap<QString, QString> dirs;
-    for (const QString &folder : folders) {
+    for (const QString &given : folders) {
+        // Absolute from here on: a command runs in its plugin's folder, so a
+        // relative one would be resolved twice.
+        const QString folder = QDir(given).absolutePath();
         for (const QString &id : QDir(folder).entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
             if (validId.match(id).hasMatch())
                 dirs.insert(id, QDir(folder).filePath(id));

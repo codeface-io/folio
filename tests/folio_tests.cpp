@@ -30,6 +30,7 @@
 #include "backend.h"
 #include "fileops.h"
 #include "foldermodel.h"
+#include "mounter.h"
 #include "places.h"
 #include "plugins.h"
 #include "previewer.h"
@@ -1606,6 +1607,34 @@ private slots:
         QCOMPARE(plugins[0].sectionTitle, QString("Mine"));
         QCOMPARE(plugins[0].dir, user.filePath("dropbox"));
         QCOMPARE(plugins[1].dir, packaged.filePath("tailscale"));
+    }
+
+    void pluginFoldersAreAbsolute()
+    {
+        // A relative folder (FOLIO_PLUGINS_PATH=plugins) is made absolute
+        // once: commands run in their plugin's folder, so it would otherwise
+        // be resolved twice.
+        QTemporaryDir parent;
+        QDir(parent.path()).mkpath("rel");
+        writePlugin(parent.filePath("rel"), "demo", R"({"folio": 1})");
+        const QString before = QDir::currentPath();
+        QDir::setCurrent(parent.path());
+        const auto plugins = Plugins::read({"rel"}, "en");
+        QDir::setCurrent(before);
+        QCOMPARE(plugins.size(), 1);
+        QCOMPARE(plugins[0].dir, parent.filePath("rel/demo"));
+    }
+
+    void mountsRememberWhereGVfsPutThem()
+    {
+        // Only SFTP's folder can be worked out ahead; any other address is
+        // known once it has been mounted, so its row can light up.
+        QVERIFY(Mounter::folderFor("smb://nas/media").isEmpty());
+        const QString folder = Mounter::root() + "/smb-share:server=nas,share=media";
+        Mounter::known()["smb://nas/media"] = folder;
+        QCOMPARE(Mounter::folderFor("smb://nas/media"), folder);
+        Mounter::known().remove("smb://nas/media");
+        QCOMPARE(Mounter::folderFor("sftp://me@studio:2222/"), Mounter::root() + "/sftp:host=studio,port=2222,user=me");
     }
 
     void pluginCommandsRunInTheirFolderAndEndWhole()

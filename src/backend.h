@@ -19,8 +19,10 @@ class Backend : public QObject {
     Q_PROPERTY(FolderModel *folder READ folder CONSTANT)
     Q_PROPERTY(Mounter *mounter READ mounter CONSTANT)
     Q_PROPERTY(QString path READ path NOTIFY pathChanged)
-    Q_PROPERTY(QString title READ title NOTIFY pathChanged)
-    Q_PROPERTY(QVariantList crumbs READ crumbs NOTIFY pathChanged)
+    // What the place is called: changes with the path, and with a plugin's
+    // labels (a poll, a language switch) while its view is shown.
+    Q_PROPERTY(QString title READ title NOTIFY placeChanged)
+    Q_PROPERTY(QVariantList crumbs READ crumbs NOTIFY placeChanged)
     Q_PROPERTY(QString message READ message NOTIFY messageChanged)
     Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
     Q_PROPERTY(QString busy READ busy NOTIFY busyChanged)
@@ -36,7 +38,7 @@ public:
     ~Backend() override;
 
     // The plugins whose views, items and share entries this window offers.
-    void setPlugins(Plugins *plugins) { m_plugins = plugins; }
+    void setPlugins(Plugins *plugins);
 
     FolderModel *folder() { return &m_folder; }
     Mounter *mounter() { return &m_mounter; }
@@ -98,6 +100,7 @@ public:
 
 signals:
     void pathChanged();
+    void placeChanged();
     void messageChanged();
     void noticeChanged();
     void busyChanged();

@@ -161,6 +161,10 @@ public:
     // Longest line of standard error kept.
     static constexpr int maxErrorLine = 1000;
 
+public:
+    // A mount finished, so items that mount can find their folder.
+    void mountsChanged() { rebuild(); }
+
 signals:
     void changed();
 
