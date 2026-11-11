@@ -709,6 +709,21 @@ void FileOps::newFolder(const QString &folder) {
     emit done(folder, name);
 }
 
+QString FileOps::defaultAppName(const QString &mime) {
+    if (mime.isEmpty() || mime == "inode/directory")
+        return {};
+    char *type = g_content_type_from_mime_type(mime.toUtf8().constData());
+    if (!type)
+        return {};
+    GAppInfo *app = g_app_info_get_default_for_type(type, FALSE);
+    g_free(type);
+    if (!app)
+        return {};
+    const QString name = QString::fromUtf8(g_app_info_get_name(app));
+    g_object_unref(app);
+    return name;
+}
+
 QString FileOps::defaultAppFor(const QString &path) {
     const QString mime = QFileInfo(path).isDir() ? QStringLiteral("inode/directory")
                                                   : QMimeDatabase().mimeTypeForFile(path).name();

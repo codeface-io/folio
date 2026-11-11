@@ -168,7 +168,10 @@ Rectangle {
             focusPolicy: Qt.NoFocus
             hoverEnabled: true
             enabled: !pane.noting
-            text: pane.trashed || pane.noting ? qsTr("Restore") : pane.hasItem && pane.item.isDir ? qsTr("Open folder") : qsTr("Open")
+            // Names the app the file opens in: "Open with Plain".
+            readonly property string app: pane.hasItem && !pane.item.isDir && pane.folderPane ? pane.folderPane.paneFileOps.defaultAppName(pane.item.mime || "") : ""
+            text: pane.trashed || pane.noting ? qsTr("Restore") : pane.hasItem && pane.item.isDir ? qsTr("Open folder")
+                : app ? qsTr("Open with %1").arg(app) : qsTr("Open")
             Accessible.name: text
             onClicked: pane.trashed ? pane.folderPane.paneFileOps.restore([pane.item.path]) : pane.folderPane.paneBackend.open(pane.item.path)
             background: Rectangle {
