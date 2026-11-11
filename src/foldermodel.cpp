@@ -217,7 +217,8 @@ QString FolderModel::kindForMime(const QString &mime) {
                                       "application/x-xz", "application/zstd", "application/x-7z-compressed",
                                       "application/x-compressed-tar", "application/x-zstd-compressed-tar",
                                       "application/vnd.rar", "application/x-iso9660-image"};
-    if (archives.contains(mime)) return "archive";
+    // Every compressed tar too: .tar.xz, .tar.bz2, .tar.lz4 and the rest.
+    if (archives.contains(mime) || mime.endsWith("-compressed-tar")) return "archive";
     return "other";
 }
 

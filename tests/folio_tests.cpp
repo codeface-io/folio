@@ -1528,6 +1528,7 @@ private slots:
         QCOMPARE(FolderModel::kindForMime("video/mp4"), QString("video"));
         QCOMPARE(FolderModel::kindForMime("audio/mp4"), QString("audio"));
         QCOMPARE(FolderModel::kindForMime("application/zip"), QString("archive"));
+        QCOMPARE(FolderModel::kindForMime("application/x-xz-compressed-tar"), QString("archive"));
         // Whatever reads as text is text: code, config and data formats too.
         for (const char *mime : {"application/x-ruby", "application/json", "application/x-shellscript",
                                  "application/toml", "application/x-yaml", "application/javascript"})
