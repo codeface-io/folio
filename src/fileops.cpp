@@ -358,20 +358,32 @@ static void note(QList<FileOps::Step> *steps, const QString &from, const QString
         *steps << FileOps::Step{true, to, {}};
 }
 
-// Sends what's at `path` to the trash to make room for what replaces it.
-static bool makeRoom(const QString &path, QString *error, QList<FileOps::Step> *steps) {
-    QString why;
-    const QString trashed = FileOps::trashOne(path, &why);
-    // In the trash, but not found there, it can't be brought back by undo.
-    if (trashed.isEmpty() && why.isEmpty())
-        return true;
-    if (trashed.isEmpty()) {
-        *error = QObject::tr("Couldn't move %1 to the trash to replace it: %2").arg(QFileInfo(path).fileName(), why);
-        return false;
+// Puts `from` at `to`, first sending what's there to the trash when
+// replacing it. When nothing arrives in its place (a file that can't be
+// read, a full drive, a cancel), what was there is put back, so a replace
+// that fails never leaves the place empty.
+static bool putReplacing(const QString &from, const QString &to, bool move, bool replacing, QString *error,
+                         FileOps::Job *job, QList<FileOps::Step> *steps) {
+    QString trashed;
+    if (replacing) {
+        QString why;
+        trashed = FileOps::trashOne(to, &why);
+        if (trashed.isEmpty() && !why.isEmpty()) {
+            *error = QObject::tr("Couldn't move %1 to the trash to replace it: %2").arg(QFileInfo(to).fileName(), why);
+            return false;
+        }
+        // In the trash, but not found there, it can't be brought back by undo.
+        if (!trashed.isEmpty() && steps)
+            *steps << FileOps::Step{true, to, trashed};
     }
-    if (steps)
-        *steps << FileOps::Step{true, path, trashed};
-    return true;
+    const bool finished = put(from, to, move, error, job);
+    note(steps, from, to, move, finished);
+    if (!finished && !trashed.isEmpty() && !taken(to)) {
+        QString why;
+        if (!FileOps::restoreOne(trashed, &why).isEmpty() && steps)
+            steps->removeLast();
+    }
+    return finished;
 }
 
 // Puts what's in the folder `from` into the folder `to`, which is already
@@ -394,11 +406,7 @@ static bool merge(const QString &from, const QString &to, bool move, QString *er
                 return false;
             continue;
         }
-        if (taken(there) && !makeRoom(there, error, steps))
-            return false;
-        const bool finished = put(entry.filePath(), there, move, error, job);
-        note(steps, entry.filePath(), there, move, finished);
-        if (!finished)
+        if (!putReplacing(entry.filePath(), there, move, taken(there), error, job, steps))
             return false;
     }
     if (move)
@@ -468,6 +476,7 @@ QStringList FileOps::transfer(const QStringList &paths, const QString &folder, M
         }
         // A name taken by the item itself, or by what holds it, is kept
         // beside without asking.
+        bool replacing = false;
         if (taken(there)) {
             const Choice choice = clashing(path, there) ? choices.value(path, KeepBoth) : KeepBoth;
             if (choice == Skip) {
@@ -486,15 +495,14 @@ QStringList FileOps::transfer(const QStringList &paths, const QString &folder, M
             }
             if (choice == KeepBoth)
                 name = freeName(target, name);
-            else if (!makeRoom(there, error, steps))
-                break;
+            else
+                replacing = true;
         }
         const QString destination = QDir(target).filePath(name);
         // A single folder counts what's in it, so there's more to count.
         if (job && outer.size() == 1 && isFolder(path))
             job->countIn = QDir::cleanPath(path);
-        const bool finished = put(path, destination, move, error, job);
-        note(steps, path, destination, move, finished);
+        const bool finished = putReplacing(path, destination, move, replacing, error, job, steps);
         if (!finished) {
             // What arrived of a move is now the only copy of it, and what was
             // copied before a cancel stays: either is shown.

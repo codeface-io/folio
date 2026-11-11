@@ -1333,6 +1333,29 @@ private slots:
         QCOMPARE(steps[0].other, trashed);
     }
 
+    void fileOpsReplaceThatFailsPutsTheOldOneBack()
+    {
+        // What's replaced goes to the trash first; when nothing takes its
+        // place (a file that can't be read, a full drive, a cancel), it's
+        // put back rather than left there.
+        QTemporaryDir data, from, to;
+        const auto restore = dataHomeAt(data.path());
+        write(from.filePath("a.txt"), "new");
+        write(to.filePath("a.txt"), "old");
+        QFile::setPermissions(from.filePath("a.txt"), QFile::Permissions());
+        if (QFile(from.filePath("a.txt")).open(QIODevice::ReadOnly))
+            QSKIP("Running as root reads everything.");
+        QString error;
+        QList<FileOps::Step> steps;
+        QVERIFY(FileOps::transfer({from.filePath("a.txt")}, to.path(), FileOps::Copy, &error,
+                                  {{from.filePath("a.txt"), FileOps::Replace}}, nullptr, &steps)
+                    .isEmpty());
+        QCOMPARE(error, QString("Couldn't copy a.txt."));
+        QCOMPARE(contents(to.filePath("a.txt")), QByteArray("old"));
+        QVERIFY(!QFileInfo::exists(data.filePath("Trash/files/a.txt")));
+        QVERIFY(steps.isEmpty());
+    }
+
     void fileOpsMergeFolders()
     {
         // A folder onto a folder merges: what's new goes in, and a clash
