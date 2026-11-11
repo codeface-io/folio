@@ -1181,7 +1181,7 @@ private slots:
         FileOps::Job job;
         QString error;
         QFuture<QStringList> copied = QtConcurrent::run([&] {
-            return FileOps::transfer({from.filePath("a.txt"), from.filePath("pipe")}, to.path(), FileOps::Copy, &error, &job);
+            return FileOps::transfer({from.filePath("a.txt"), from.filePath("pipe")}, to.path(), FileOps::Copy, &error, {}, &job);
         });
         int writer = -1;
         const auto finish = qScopeGuard([&] {
@@ -1236,7 +1236,7 @@ private slots:
         FileOps::Job job;
         QString error;
         QFuture<QStringList> moved = QtConcurrent::run([&] {
-            return FileOps::transfer({from.filePath("box")}, other->path(), FileOps::Move, &error, &job);
+            return FileOps::transfer({from.filePath("box")}, other->path(), FileOps::Move, &error, {}, &job);
         });
         int writer = -1;
         const auto finish = qScopeGuard([&] {
@@ -1262,6 +1262,117 @@ private slots:
         QVERIFY(!QFileInfo::exists(other->filePath("box/pipe")));
         QVERIFY(QFile::exists(from.filePath("box/z.txt")));
         QVERIFY(!QFile::exists(other->filePath("box/z.txt")));
+    }
+
+    void fileOpsAskWhichClashes()
+    {
+        // Only a name that's taken by something else clashes: not a copy
+        // onto itself (kept beside it, as always), nor a move into the
+        // folder it's in.
+        QTemporaryDir from, to;
+        write(from.filePath("a.txt"), "a");
+        write(from.filePath("b.txt"), "b");
+        write(to.filePath("a.txt"), "old");
+        QCOMPARE(FileOps::clashes({from.filePath("a.txt"), from.filePath("b.txt")}, to.path(), FileOps::Copy),
+                 QStringList({from.filePath("a.txt")}));
+        QCOMPARE(FileOps::clashes({from.filePath("a.txt")}, from.path(), FileOps::Copy), QStringList());
+        QCOMPARE(FileOps::clashes({from.filePath("a.txt")}, from.path(), FileOps::Move), QStringList());
+    }
+
+    void fileOpsReplaceSkipOrKeepBoth()
+    {
+        QTemporaryDir data, from, to;
+        const auto restore = dataHomeAt(data.path());
+        for (const char *name : {"replace.txt", "skip.txt", "both.txt"}) {
+            write(from.filePath(name), "new");
+            write(to.filePath(name), "old");
+        }
+        const QStringList paths{from.filePath("replace.txt"), from.filePath("skip.txt"), from.filePath("both.txt")};
+        QString error;
+        const QStringList made = FileOps::transfer(paths, to.path(), FileOps::Copy, &error,
+                                                   {{paths[0], FileOps::Replace}, {paths[1], FileOps::Skip}, {paths[2], FileOps::KeepBoth}});
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(made, QStringList({"replace.txt", "both (copy).txt"}));
+        QCOMPARE(contents(to.filePath("replace.txt")), QByteArray("new"));
+        QCOMPARE(contents(to.filePath("skip.txt")), QByteArray("old"));
+        QCOMPARE(contents(to.filePath("both.txt")), QByteArray("old"));
+        QCOMPARE(contents(to.filePath("both (copy).txt")), QByteArray("new"));
+        // What's replaced isn't deleted: it's in the trash, with its note.
+        const QString trashed = data.filePath("Trash/files/replace.txt");
+        QCOMPARE(contents(trashed), QByteArray("old"));
+        QCOMPARE(FileOps::originalPath(trashed), to.filePath("replace.txt"));
+    }
+
+    void fileOpsMergeFolders()
+    {
+        // A folder onto a folder merges: what's new goes in, and a clash
+        // inside is replaced the same way, the old one to the trash.
+        QTemporaryDir data, from, to;
+        const auto restore = dataHomeAt(data.path());
+        QDir(from.path()).mkpath("album/sub");
+        QDir(to.path()).mkpath("album/sub");
+        write(from.filePath("album/a.jpg"), "new");
+        write(from.filePath("album/sub/c.jpg"), "c");
+        write(to.filePath("album/a.jpg"), "old");
+        write(to.filePath("album/keep.jpg"), "keep");
+        QString error;
+        QCOMPARE(FileOps::transfer({from.filePath("album")}, to.path(), FileOps::Move, &error,
+                                   {{from.filePath("album"), FileOps::Replace}}),
+                 QStringList({"album"}));
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(contents(to.filePath("album/a.jpg")), QByteArray("new"));
+        QCOMPARE(contents(to.filePath("album/keep.jpg")), QByteArray("keep"));
+        QCOMPARE(contents(to.filePath("album/sub/c.jpg")), QByteArray("c"));
+        QCOMPARE(contents(data.filePath("Trash/files/a.jpg")), QByteArray("old"));
+        // Moved, the emptied folder goes.
+        QVERIFY(!QFileInfo::exists(from.filePath("album")));
+    }
+
+    void fileOpsAskAboutEachClashOrAll()
+    {
+        // Pasting asks about each clash before anything is copied; the
+        // answer can go for the rest, and Escape cancels the lot.
+        QTemporaryDir from, to;
+        for (const char *name : {"x.txt", "y.txt", "z.txt"})
+            write(from.filePath(name), "new");
+        write(to.filePath("x.txt"), "old");
+        write(to.filePath("y.txt"), "old");
+        QDir(from.path()).mkdir("box");
+        QDir(to.path()).mkdir("box");
+        FileOps ops;
+        QSignalSpy done(&ops, &FileOps::done);
+        ops.copy({from.filePath("box"), from.filePath("x.txt"), from.filePath("y.txt"), from.filePath("z.txt")});
+        ops.paste(to.path());
+        QVERIFY(ops.busy().isEmpty());
+        QCOMPARE(ops.clash().value("name").toString(), QString("box"));
+        QCOMPARE(ops.clash().value("folder").toString(), QFileInfo(to.path()).fileName());
+        QVERIFY(ops.clash().value("merge").toBool());
+        QCOMPARE(ops.clash().value("others").toInt(), 2);
+        ops.answerClash("both", false);
+        QCOMPARE(ops.clash().value("name").toString(), QString("x.txt"));
+        QVERIFY(!ops.clash().value("merge").toBool());
+        QCOMPARE(ops.clash().value("others").toInt(), 1);
+        // Nothing is copied until the last answer.
+        QVERIFY(!QFile::exists(to.filePath("z.txt")));
+        ops.answerClash("skip", true);
+        QVERIFY(ops.clash().isEmpty());
+        QVERIFY(done.wait(3000));
+        QVERIFY(QFileInfo(to.filePath("box (copy)")).isDir());
+        QCOMPARE(contents(to.filePath("x.txt")), QByteArray("old"));
+        QCOMPARE(contents(to.filePath("y.txt")), QByteArray("old"));
+        QCOMPARE(contents(to.filePath("z.txt")), QByteArray("new"));
+        QVERIFY(!QFile::exists(to.filePath("x (copy).txt")));
+
+        // Cancelled, nothing happens at all.
+        QTemporaryDir fresh;
+        write(fresh.filePath("x.txt"), "old");
+        ops.copy({from.filePath("x.txt"), from.filePath("z.txt")});
+        ops.paste(fresh.path());
+        QVERIFY(!ops.clash().isEmpty());
+        ops.dropClash();
+        QVERIFY(ops.clash().isEmpty());
+        QVERIFY(ops.busy().isEmpty());
+        QVERIFY(!QFile::exists(fresh.filePath("z.txt")));
     }
 
     void kindsFromMimeTypes()

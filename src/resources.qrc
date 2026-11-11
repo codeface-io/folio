@@ -24,6 +24,7 @@
         <file>SortMenu.qml</file>
         <file>FileMenu.qml</file>
         <file>FolioDialog.qml</file>
+        <file>ClashDialog.qml</file>
         <file>ConfirmDialog.qml</file>
         <file>RenameDialog.qml</file>
         <file>MountPrompt.qml</file>

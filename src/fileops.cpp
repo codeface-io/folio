@@ -321,7 +321,71 @@ static bool put(const QString &from, const QString &to, bool move, QString *erro
     return true;
 }
 
-QStringList FileOps::transfer(const QStringList &paths, const QString &folder, Mode mode, QString *error, Job *job) {
+// Sends what's at `path` to the trash to make room for what replaces it.
+static bool makeRoom(const QString &path, QString *error) {
+    QString why;
+    if (FileOps::trashOne(path, &why).isEmpty() && !why.isEmpty()) {
+        *error = QObject::tr("Couldn't move %1 to the trash to replace it: %2").arg(QFileInfo(path).fileName(), why);
+        return false;
+    }
+    return true;
+}
+
+// Puts what's in the folder `from` into the folder `to`, which is already
+// there: what isn't there yet goes in, a folder onto a folder merges in
+// turn, and anything else in the way goes to the trash first. Moving, the
+// folder goes once it's empty.
+static bool merge(const QString &from, const QString &to, bool move, QString *error, FileOps::Job *job) {
+    if (!QFileInfo(from).isReadable()) {
+        *error = QObject::tr("Couldn't read %1.").arg(QFileInfo(from).fileName());
+        return false;
+    }
+    const auto entries = QDir(from).entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+    for (const QFileInfo &entry : entries) {
+        if (job && job->cancelled)
+            return false;
+        const QString there = QDir(to).filePath(entry.fileName());
+        if (taken(there) && isFolder(entry.filePath()) && isFolder(there)) {
+            if (!merge(entry.filePath(), there, move, error, job))
+                return false;
+            continue;
+        }
+        if (taken(there) && !makeRoom(there, error))
+            return false;
+        if (!put(entry.filePath(), there, move, error, job))
+            return false;
+    }
+    if (move)
+        QDir().rmdir(from);
+    return true;
+}
+
+// Whether putting `path` at `there` clashes with something else: not when
+// it's the item itself (copied onto itself, it's kept beside), nor what
+// holds it, which replacing would take along.
+static bool clashing(const QString &path, const QString &there) {
+    const QString self = QDir::cleanPath(path), other = QDir::cleanPath(there);
+    return taken(there) && self != other && !self.startsWith(other + '/');
+}
+
+QStringList FileOps::clashes(const QStringList &paths, const QString &folder, Mode mode) {
+    QStringList clash;
+    const QString target = QDir::cleanPath(folder);
+    for (const QString &path : outermost(paths)) {
+        const QFileInfo info(path);
+        // Moved into the folder it's in, it stays as it is.
+        if (mode != Copy && QDir::cleanPath(info.absolutePath()) == target)
+            continue;
+        if (clashing(path, QDir(target).filePath(info.fileName())))
+            clash << path;
+    }
+    // Each is asked about once, however often it was chosen.
+    clash.removeDuplicates();
+    return clash;
+}
+
+QStringList FileOps::transfer(const QStringList &paths, const QString &folder, Mode mode, QString *error,
+                              const QHash<QString, Choice> &choices, Job *job) {
     QStringList made;
     const QString target = QDir::cleanPath(folder);
     const QStringList outer = outermost(paths);
@@ -346,7 +410,29 @@ QStringList FileOps::transfer(const QStringList &paths, const QString &folder, M
             *error = QObject::tr("Can't put %1 inside itself.").arg(info.fileName());
             break;
         }
-        const QString name = freeName(target, info.fileName());
+        QString name = info.fileName();
+        const QString there = QDir(target).filePath(name);
+        if (clashing(path, there)) {
+            const Choice choice = choices.value(path, KeepBoth);
+            if (choice == Skip) {
+                if (job)
+                    ++job->done;
+                continue;
+            }
+            if (choice == Replace && isFolder(path) && isFolder(there)) {
+                const bool merged = merge(path, there, move, error, job);
+                made << name;
+                if (!merged)
+                    break;
+                if (job)
+                    ++job->done;
+                continue;
+            }
+            if (choice == KeepBoth)
+                name = freeName(target, name);
+            else if (!makeRoom(there, error))
+                break;
+        }
         const QString destination = QDir(target).filePath(name);
         // A single folder counts what's in it, so there's more to count.
         if (job && outer.size() == 1 && isFolder(path))
@@ -465,6 +551,53 @@ void FileOps::sayStopped(const Job &job) {
     emit notice(tr("Stopped after %1 of %n items.", "", job.total).arg(job.done.load()));
 }
 
+void FileOps::transferInBackground(const QStringList &paths, const QString &folder, Mode mode, bool releaseClipboard) {
+    // Each name that's taken is asked about before anything moves; the
+    // last answer starts it.
+    const QStringList clashing = clashes(paths, folder, mode);
+    if (!clashing.isEmpty()) {
+        m_pending = Pending{paths, folder, mode, releaseClipboard, clashing, {}};
+        emit clashChanged();
+        return;
+    }
+    startTransfer(paths, folder, mode, releaseClipboard);
+}
+
+QVariantMap FileOps::clash() const {
+    if (!m_pending)
+        return {};
+    const QString path = m_pending->clashing.at(m_pending->choices.size());
+    const QString there = QDir(m_pending->folder).filePath(QFileInfo(path).fileName());
+    const QString folder = QFileInfo(m_pending->folder).fileName();
+    return {{"name", QFileInfo(path).fileName()},
+            {"folder", folder.isEmpty() ? m_pending->folder : folder},
+            {"merge", isFolder(path) && isFolder(there)},
+            {"others", m_pending->clashing.size() - m_pending->choices.size() - 1}};
+}
+
+void FileOps::answerClash(const QString &choice, bool forAll) {
+    if (!m_pending)
+        return;
+    Pending &pending = *m_pending;
+    const Choice answer = choice == "replace" ? Replace : choice == "skip" ? Skip : KeepBoth;
+    do
+        pending.choices.insert(pending.clashing.at(pending.choices.size()), answer);
+    while (forAll && pending.choices.size() < pending.clashing.size());
+    if (pending.choices.size() < pending.clashing.size()) {
+        emit clashChanged();
+        return;
+    }
+    const Pending ready = std::move(pending);
+    m_pending.reset();
+    emit clashChanged();
+    startTransfer(ready.paths, ready.folder, ready.mode, ready.releaseClipboard, ready.choices);
+}
+
+void FileOps::dropClash() {
+    m_pending.reset();
+    emit clashChanged();
+}
+
 namespace {
 // What work hands back from the worker: what it made, and what went wrong.
 struct Outcome {
@@ -474,8 +607,8 @@ struct Outcome {
 };
 }
 
-void FileOps::transferInBackground(const QStringList &paths, const QString &folder, Mode mode, bool releaseClipboard,
-                                   bool duplicating) {
+void FileOps::startTransfer(const QStringList &paths, const QString &folder, Mode mode, bool releaseClipboard,
+                            const QHash<QString, Choice> &choices, bool duplicating) {
     // A drop says what its first item does; each is moved or copied by its
     // own drive.
     const bool moving = mode == Move || (mode == Drop && sameDrive(paths.first(), folder));
@@ -497,9 +630,9 @@ void FileOps::transferInBackground(const QStringList &paths, const QString &fold
             return moving ? counting(job, tr("Moving %1 of %n items…", "", job.total), one)
                           : counting(job, tr("Copying %1 of %n items…", "", job.total), one);
         },
-        [paths, folder, mode](Job &job) {
+        [paths, folder, mode, choices](Job &job) {
             Outcome result;
-            result.made = transfer(paths, folder, mode, &result.error, &job);
+            result.made = transfer(paths, folder, mode, &result.error, choices, &job);
             return result;
         },
         [this, paths, folder, releaseClipboard](const Outcome &result, const Job &job) {
@@ -522,7 +655,8 @@ void FileOps::duplicate(const QString &path) {
     if (!idle())
         return;
     const QFileInfo info(path);
-    transferInBackground({path}, info.absolutePath(), Copy, false, true);
+    // A copy beside itself never clashes, so there's nothing to ask.
+    startTransfer({path}, info.absolutePath(), Copy, false, {}, true);
 }
 
 QString FileOps::archiveName(const QStringList &paths, const QString &folder) {
@@ -677,6 +811,81 @@ void FileOps::trash(const QStringList &paths) {
             else if (job.cancelled)
                 sayStopped(job);
         });
+}
+
+// Where GIO put `original` in a trash: the newest item whose note says it
+// came from there.
+static QString findTrashed(const QString &original) {
+    const QString name = QFileInfo(original).fileName();
+    QString found;
+    QDateTime newest;
+    for (const QString &dir : FileOps::trashDirs()) {
+        for (const QString &note : QDir(dir + "/info").entryList(QDir::Files | QDir::Hidden)) {
+            if (!note.startsWith(name) || !note.endsWith(".trashinfo"))
+                continue;
+            const QString item = dir + "/files/" + note.chopped(10);
+            const QDateTime when = FileOps::deletedAt(item);
+            if (FileOps::originalPath(item) == original && (found.isEmpty() || when > newest)) {
+                found = item;
+                newest = when;
+            }
+        }
+    }
+    return found;
+}
+
+// The home trash is filled here rather than by GIO, which doesn't say where
+// in the trash an item went. Each item gets its note first, under a name no
+// other item can take at the same time, then goes in, as the freedesktop
+// Trash spec has it. Other drives' trash folders, with their own rules, are
+// GIO's to fill, and the item is looked for there once it's gone.
+QString FileOps::trashOne(const QString &path, QString *error) {
+    const QFileInfo item(path);
+    const QString trash = homeTrash();
+    if (!taken(path)) {
+        *error = QString::fromLocal8Bit(strerror(ENOENT));
+        return {};
+    }
+    const auto owner = QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner;
+    if (QDir().mkpath(trash + "/files", owner) && QDir().mkpath(trash + "/info", owner)
+        && sameDrive(path, trash)) {
+        const QByteArray note = "[Trash Info]\nPath=" + QUrl::toPercentEncoding(item.absoluteFilePath(), "/")
+                                + "\nDeletionDate=" + QDateTime::currentDateTime().toString("yyyy-MM-ddTHH:mm:ss").toUtf8() + "\n";
+        // A name taken in either folder goes on to the next; a drive that
+        // turns out to be another (a btrfs subvolume) goes to GIO.
+        for (int n = 1, why = EEXIST; why == EEXIST; ++n) {
+            const QString name = n == 1 ? item.fileName() : item.fileName() + '.' + QString::number(n);
+            QFile info(trash + "/info/" + name + ".trashinfo");
+            if (!info.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+                if (info.exists())
+                    continue;
+                *error = info.errorString();
+                return {};
+            }
+            const bool written = info.write(note) == note.size() && info.flush();
+            info.close();
+            const QString trashed = trash + "/files/" + name;
+            if (written && renameNoReplace(path, trashed))
+                return trashed;
+            why = errno;
+            info.remove();
+            if (!written || (why != EEXIST && why != EXDEV)) {
+                *error = written ? QString::fromLocal8Bit(strerror(why)) : info.errorString();
+                return {};
+            }
+        }
+    }
+    GFile *file = g_file_new_for_path(QFile::encodeName(path).constData());
+    GError *problem = nullptr;
+    const bool trashed = g_file_trash(file, nullptr, &problem);
+    g_object_unref(file);
+    if (!trashed) {
+        *error = problem ? QString::fromUtf8(problem->message) : QString();
+        if (problem)
+            g_error_free(problem);
+        return {};
+    }
+    return findTrashed(item.absoluteFilePath());
 }
 
 QString FileOps::homeTrash() {
@@ -1066,7 +1275,7 @@ QProcess *FileOps::runTool(const QString &program, const QStringList &args, cons
 }
 
 bool FileOps::idle() {
-    if (m_busy.isEmpty())
+    if (m_busy.isEmpty() && !m_pending)
         return true;
     emit failed(tr("Try again once the work under way is done."));
     return false;

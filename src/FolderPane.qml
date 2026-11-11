@@ -50,7 +50,7 @@ FocusScope {
     property bool cursorLetGo: false
     // While a text field has the keyboard (renaming, a password), single-key
     // and clipboard shortcuts stand aside so typing works.
-    readonly property bool typing: rename.visible || confirm.visible || backend.mounter.asking || pathBar.editing || pathBar.searchFocused || (!!host && host.helpVisible)
+    readonly property bool typing: rename.visible || confirm.visible || clash.visible || backend.mounter.asking || pathBar.editing || pathBar.searchFocused || (!!host && host.helpVisible)
     readonly property bool keys: active && !typing
     // What file actions act on: everything selected, or the item under
     // the cursor when nothing is.
@@ -407,6 +407,12 @@ FocusScope {
 
     ConfirmDialog {
         id: confirm
+        anchors.fill: parent
+        onVisibleChanged: if (!visible) pane.focusView()
+    }
+
+    ClashDialog {
+        id: clash
         anchors.fill: parent
         onVisibleChanged: if (!visible) pane.focusView()
     }

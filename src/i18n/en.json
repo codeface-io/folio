@@ -16,5 +16,6 @@
   "Deleting %1 of %n items…": { "one": "Deleting %1 of %n item…", "other": "Deleting %1 of %n items…" },
   "Emptying the trash: %1 of %n items…": { "one": "Emptying the trash: %1 of %n item…", "other": "Emptying the trash: %1 of %n items…" },
   "Compressing %1 of %n items into %2…": { "one": "Compressing %1 of %n item into %2…", "other": "Compressing %1 of %n items into %2…" },
-  "Stopped after %1 of %n items.": { "one": "Stopped after %1 of %n item.", "other": "Stopped after %1 of %n items." }
+  "Stopped after %1 of %n items.": { "one": "Stopped after %1 of %n item.", "other": "Stopped after %1 of %n items." },
+  "Do this for the other %n clashes": { "one": "Do this for the other clash", "other": "Do this for the other %n clashes" }
 }

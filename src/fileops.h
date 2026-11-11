@@ -8,6 +8,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <optional>
 
 class QMimeData;
 class QProcess;
@@ -16,11 +17,13 @@ class QProcess;
 // paths as text), trash, rename, new folder, and opening with another app.
 // Long work (copying a folder of videos) runs off the UI thread, reports how
 // far it's got through `busy`, and can be cancelled. Nothing is ever
-// overwritten, so a name that's taken gets a "(copy)" name beside it.
+// overwritten: a name that's taken is asked about first (`clash`), and what's
+// replaced goes to the trash.
 class FileOps : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(bool canPaste READ canPaste NOTIFY clipboardChanged)
+    Q_PROPERTY(QVariantMap clash READ clash NOTIFY clashChanged)
 
 public:
     explicit FileOps(QObject *parent = nullptr);
@@ -107,6 +110,16 @@ public:
     // Stops the work under way at the next file; what's done stays done.
     Q_INVOKABLE void cancel();
 
+    // A name taken where things are going, asked about one at a time before
+    // anything moves: {name, folder (its name), merge (a folder onto a
+    // folder), others (how many more clash after this one)}, or empty.
+    QVariantMap clash() const;
+    // "replace" (or merge, for folders), "skip" or "both"; `forAll` gives
+    // the clashes still to come the same answer.
+    Q_INVOKABLE void answerClash(const QString &choice, bool forAll);
+    // Cancels the whole operation the clash was asked for.
+    Q_INVOKABLE void dropClash();
+
     // Building blocks, kept static for tests.
     static QMimeData *mimeDataFor(const QStringList &paths, bool cut);
     // The paths on the clipboard and whether they were cut.
@@ -140,37 +153,50 @@ public:
     static QString infoFileFor(const QString &trashedPath);
     // Restores one item; returns where it went, or empty with `error` set.
     static QString restoreOne(const QString &trashedPath, QString *error, Job *job = nullptr);
+    // Moves one item to the trash; returns where it is there, or empty with
+    // `error` saying why, or with no error when it went but can't be found.
+    static QString trashOne(const QString &path, QString *error);
     static bool deleteTrashed(const QString &trashedPath);
     static int emptyTrashDir(const QString &trashDir, Job *job = nullptr);
     // How transfer() takes the paths: copied, moved, or as a drop takes
     // them, each moved from the folder's drive and copied from any other.
     enum Mode { Copy, Move, Drop };
-    // Copies or moves each path into `folder`; returns the new names.
+    // What to do when a name is taken: put it beside under a "(copy)" name,
+    // leave it, or replace what's there (sending that to the trash), which
+    // for a folder onto a folder merges them, each clash inside replaced.
+    enum Choice { KeepBoth, Skip, Replace };
+    // The paths whose names are taken in `folder`, which would clash.
+    static QStringList clashes(const QStringList &paths, const QString &folder, Mode mode);
+    // Copies or moves each path into `folder`, a clash as `choices` says
+    // (keeping both when it doesn't); returns the new names.
     static QStringList transfer(const QStringList &paths, const QString &folder, Mode mode, QString *error,
-                                Job *job = nullptr);
+                                const QHash<QString, Choice> &choices = {}, Job *job = nullptr);
 
 signals:
     void busyChanged();
     void clipboardChanged();
     void failed(const QString &message);
     void notice(const QString &notice);
+    void clashChanged();
     // Work finished in `folder`, which now holds `name` (to select it).
     void done(const QString &folder, const QString &name);
 
 private:
     void setBusy(const QString &busy);
-    // One piece of work runs at a time: whether nothing else is running,
-    // saying why when something is, so what's refused doesn't just do
-    // nothing.
+    // One piece of work runs at a time: whether nothing else is running
+    // (or waiting on a clash), saying why when something is, so what's
+    // refused doesn't just do nothing.
     bool idle();
     // Runs `work` off the UI thread with a job it counts in and checks,
     // showing what `label` makes of the job meanwhile, then hands what it
     // returns to `done`, back on this one.
     template <typename Work, typename Done>
     void inBackground(const std::function<QString(const Job &)> &label, Work work, Done done);
-    // Copies or moves off the UI thread, showing how far it's got meanwhile.
-    void transferInBackground(const QStringList &paths, const QString &folder, Mode mode, bool releaseClipboard,
-                              bool duplicating = false);
+    // Copies or moves, first asking about each name that's taken, then off
+    // the UI thread, showing how far it's got meanwhile.
+    void transferInBackground(const QStringList &paths, const QString &folder, Mode mode, bool releaseClipboard);
+    void startTransfer(const QStringList &paths, const QString &folder, Mode mode, bool releaseClipboard,
+                       const QHash<QString, Choice> &choices = {}, bool duplicating = false);
     // Says the work was stopped, and how far it got.
     void sayStopped(const Job &job);
     // Runs a helper program (bsdtar, dropbox-cli, tailscale) while showing
@@ -185,4 +211,14 @@ private:
     std::shared_ptr<Job> m_job;
     QProcess *m_process = nullptr;
     bool m_killed = false;
+    // A transfer waiting on answers about the names it would take.
+    struct Pending {
+        QStringList paths;
+        QString folder;
+        Mode mode;
+        bool releaseClipboard;
+        QStringList clashing;
+        QHash<QString, Choice> choices;
+    };
+    std::optional<Pending> m_pending;
 };
